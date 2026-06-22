@@ -7,6 +7,20 @@ import { Shield, Mail, Lock, User, Building2, Loader2 } from "lucide-react";
 
 const API_URL = "https://compliance-ai-2xa8.onrender.com";
 
+function formatApiError(detail: unknown, fallback: string): string {
+  if (typeof detail === "string") return detail;
+  if (Array.isArray(detail)) {
+    return detail
+      .map((item) =>
+        typeof item === "object" && item !== null && "msg" in item
+          ? String((item as { msg: string }).msg)
+          : String(item)
+      )
+      .join(". ");
+  }
+  return fallback;
+}
+
 export default function SignupPage() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -41,7 +55,14 @@ export default function SignupPage() {
       console.log("Signup response:", res.status, data);
 
       if (!res.ok) {
-        setError(data.detail || `Error ${res.status}: Failed to create account`);
+        setError(
+          formatApiError(
+            data.detail,
+            res.status === 400
+              ? "Failed to create account. This email may already be registered."
+              : `Failed to create account (${res.status}). Please try again.`
+          )
+        );
         setIsLoading(false);
         return;
       }

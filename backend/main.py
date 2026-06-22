@@ -1,4 +1,4 @@
-from fastapi import FastAPI, UploadFile, File, Depends, Response, HTTPException, status
+from fastapi import FastAPI, UploadFile, File, Depends, Response, HTTPException, status, Form
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from jose import JWTError, jwt
@@ -290,7 +290,13 @@ def generate_pdf_report(document_name: str, analysis: dict, gaps: list) -> bytes
 # ============== AUTH ROUTES ==============
 
 @app.post("/api/v1/auth/register")
-def register(email: str, password: str, full_name: str = "", company_name: str = "", db: Session = Depends(get_db)):
+def register(
+    email: str = Form(...),
+    password: str = Form(...),
+    full_name: str = Form(""),
+    company_name: str = Form(""),
+    db: Session = Depends(get_db),
+):
     # Check if user exists
     db_user = db.query(UserDB).filter(UserDB.email == email).first()
     if db_user:
