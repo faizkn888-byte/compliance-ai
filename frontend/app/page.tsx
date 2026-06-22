@@ -10,7 +10,9 @@ export default function Home() {
   const [analysis, setAnalysis] = useState<any>(null);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [generatedDoc, setGeneratedDoc] = useState<string | null>(null);
-
+const [docType, setDocType] = useState("privacy_policy");
+const [compareMode, setCompareMode] = useState(false);
+const [compareDoc, setCompareDoc] = useState<string | null>(null);
   useEffect(() => {
     fetch("https://compliance-ai-2xa8.onrender.com/api/v1/documents")
       .then(res => res.json())
@@ -29,7 +31,20 @@ export default function Home() {
         }
       });
   }, []);
-
+<div className="mb-4">
+  <label className="block text-sm font-medium text-gray-700 mb-1">Document Type</label>
+  <select 
+    value={docType}
+    onChange={(e) => setDocType(e.target.value)}
+    className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm"
+  >
+    <option value="privacy_policy">Privacy Policy</option>
+    <option value="vendor_agreement">Vendor Agreement</option>
+    <option value="employment_agreement">Employment Agreement</option>
+    <option value="cybersecurity_policy">Cybersecurity Policy</option>
+    <option value="incident_response">Incident Response Plan</option>
+  </select>
+</div>
   const onDrop = useCallback(async (acceptedFiles: File[]) => {
     const file = acceptedFiles[0];
     const formData = new FormData();
@@ -37,9 +52,9 @@ export default function Home() {
 
     try {
       const uploadRes = await fetch("https://compliance-ai-2xa8.onrender.com/api/v1/documents/upload", {
-        method: "POST",
-        body: formData,
-      });
+  method: "POST",
+  body: formData,
+});
       const uploadData = await uploadRes.json();
 
       const newDocId = "doc-" + Date.now();
@@ -140,7 +155,10 @@ export default function Home() {
     document.body.removeChild(a);
     URL.revokeObjectURL(url);
   };
-
+const handleDownloadReport = () => {
+  if (!selectedDoc) return;
+  window.open(`https://compliance-ai-2xa8.onrender.com/api/v1/compliance/report/${selectedDoc}`, '_blank');
+};
   return (
     <div className="min-h-screen bg-gray-50">
       <header className="bg-white border-b border-gray-200 sticky top-0 z-10">
@@ -333,13 +351,20 @@ export default function Home() {
                         Compliance Gaps ({analysis.gaps.length})
                       </h2>
                       <button 
-                        onClick={handleGenerateFix}
-                        disabled={isAnalyzing}
-                        className="text-sm bg-blue-600 text-white px-3 py-1.5 rounded-md hover:bg-blue-700 flex items-center gap-1 disabled:opacity-50"
-                      >
-                        <Wand2 className="h-3.5 w-3.5" />
-                        Generate Fix
-                      </button>
+  onClick={handleGenerateFix}
+  disabled={isAnalyzing}
+  className="text-sm bg-blue-600 text-white px-3 py-1.5 rounded-md hover:bg-blue-700 flex items-center gap-1 disabled:opacity-50"
+>
+  <Wand2 className="h-3.5 w-3.5" />
+  Generate Fix
+</button>
+<button 
+  onClick={handleDownloadReport}
+  className="text-sm bg-purple-600 text-white px-3 py-1.5 rounded-md hover:bg-purple-700 flex items-center gap-1"
+>
+  <Download className="h-3.5 w-3.5" />
+  Download Report
+</button>
                     </div>
                     
                     <div className="space-y-4">

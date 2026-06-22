@@ -1,3 +1,12 @@
+from datetime import datetime
+from reportlab.lib.pagesizes import letter
+from reportlab.lib import colors
+from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+from reportlab.lib.units import inch
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, ListFlowable, ListItem
+from reportlab.lib.enums import TA_CENTER, TA_LEFT
+import io
+from fastapi import Response
 from fastapi import FastAPI, UploadFile, File, Depends
 from fastapi.middleware.cors import CORSMiddleware
 import shutil
@@ -26,7 +35,35 @@ allow_origins=[
 )
 
 os.makedirs("uploads", exist_ok=True)
-
+@app.post("/api/v1/documents/upload")
+async def upload_document(
+    file: UploadFile = File(...), 
+    doc_type: str = "privacy_policy",
+    db: Session = Depends(get_db)
+):
+    file_path = f"uploads/{file.filename}"
+    with open(file_path, "wb") as buffer:
+        shutil.copyfileobj(file.file, buffer)
+    
+    text = extract_text(file_path)
+    
+    db_doc = DocumentDB(
+        filename=file.filename,
+        original_name=file.filename,
+        extracted_text=text[:10000],
+        status="pending"
+    )
+    db.add(db_doc)
+    db.commit()
+    db.refresh(db_doc)
+    
+    return {
+        "id": db_doc.id,
+        "filename": file.filename,
+        "status": "pending",
+        "message": f"Saved {file.filename}. Read {len(text)} characters.",
+        "type": doc_type
+    }
 # ============== REGULATIONS DATABASE ==============
 
 REGULATIONS = {
@@ -195,7 +232,117 @@ We ensure that personal data transferred outside India is subject to adequate pr
     fixed_policy += "\n\n--- END OF POLICY ---\n\nThis is a generated template. Please review with your legal counsel before use."
     
     return fixed_policy
-
+def generate_pdf_report(document_name: str, analysis: dict, gaps: list) -> bytes:
+    """Generate a professional PDF compliance report"""
+    buffer = io.BytesIO()
+    doc = SimpleDocTemplate(buffer, pagesize=letter,
+                           rightMargin=72, leftMargin=72,
+                           topMargin=72, bottomMargin=18)
+    
+    styles = getSampleStyleSheet()
+    
+    # Custom styles
+    title_style = ParagraphStyle(
+        'CustomTitle',
+        parent=styles['Heading1'],
+        fontSize=24,
+        textColor=colors.HexColor('#1e40af'),
+        spaceAfter=30,
+        alignment=TA_CENTER
+    )
+    
+    heading_style = ParagraphStyle(
+        'CustomHeading',
+        parent=styles['Heading2'],
+        fontSize=14,
+        textColor=colors.HexColor('#1e40af'),
+        spaceAfter=12,
+        spaceBefore=12
+    )
+    
+    normal_style = styles["Normal"]
+    normal_style.fontSize = 10
+    normal_style.leading = 14
+    
+    # Build content
+    story = []
+    
+    # Title
+    story.append(Paragraph("DPDP Compliance Report", title_style))
+    story.append(Spacer(1, 0.2*inch))
+    
+    # Document info
+    story.append(Paragraph(f"<b>Document:</b> {document_name}", normal_style))
+    story.append(Paragraph(f"<b>Date:</b> {datetime.now().strftime('%B %d, %Y')}", normal_style))
+    story.append(Paragraph(f"<b>Regulation:</b> DPDP Act 2023", normal_style))
+    story.append(Spacer(1, 0.3*inch))
+    
+    # Score section
+    score = analysis.get("overall_score", 0)
+    score_color = colors.green if score >= 80 else colors.orange if score >= 60 else colors.red
+    status = "COMPLIANT" if score >= 80 else "NEEDS IMPROVEMENT" if score >= 60 else "NON-COMPLIANT"
+    
+    score_data = [
+        [Paragraph(f"<b>Compliance Score</b>", normal_style), 
+         Paragraph(f"<b>Status</b>", normal_style)],
+        [Paragraph(f"<font size=32 color={score_color.hexval()}>{score}%</font>", normal_style),
+         Paragraph(f"<font size=16 color={score_color.hexval()}>{status}</font>", normal_style)]
+    ]
+    
+    score_table = Table(score_data, colWidths=[3*inch, 3*inch])
+    score_table.setStyle(TableStyle([
+        ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#f3f4f6')),
+        ('TEXTCOLOR', (0, 0), (-1, 0), colors.black),
+        ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+        ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+        ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+        ('FONTSIZE', (0, 0), (-1, 0), 12),
+        ('BOTTOMPADDING', (0, 0), (-1, 0), 12),
+        ('BACKGROUND', (0, 1), (-1, -1), colors.white),
+        ('GRID', (0, 0), (-1, -1), 1, colors.grey),
+        ('TOPPADDING', (0, 1), (-1, -1), 20),
+        ('BOTTOMPADDING', (0, 1), (-1, -1), 20),
+    ]))
+    
+    story.append(score_table)
+    story.append(Spacer(1, 0.3*inch))
+    
+    # Gaps section
+    if gaps:
+        story.append(Paragraph("Compliance Gaps", heading_style))
+        story.append(Spacer(1, 0.1*inch))
+        
+        for gap in gaps:
+            severity_color = colors.red if gap.severity == "high" else colors.orange if gap.severity == "medium" else colors.blue
+            
+            gap_data = [
+                [Paragraph(f"<b>{gap.regulation} — {gap.section}</b>", normal_style)],
+                [Paragraph(f"<b>Severity:</b> <font color={severity_color.hexval()}>{gap.severity.upper()}</font>", normal_style)],
+                [Paragraph(f"<b>Issue:</b> {gap.description}", normal_style)],
+                [Paragraph(f"<b>Recommendation:</b> {gap.suggestion}", normal_style)]
+            ]
+            
+            gap_table = Table(gap_data, colWidths=[6*inch])
+            gap_table.setStyle(TableStyle([
+                ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#fef2f2')),
+                ('BOX', (0, 0), (-1, -1), 1, colors.HexColor('#fee2e2')),
+                ('LEFTPADDING', (0, 0), (-1, -1), 10),
+                ('RIGHTPADDING', (0, 0), (-1, -1), 10),
+                ('TOPPADDING', (0, 0), (-1, -1), 8),
+                ('BOTTOMPADDING', (0, 0), (-1, -1), 8),
+            ]))
+            
+            story.append(gap_table)
+            story.append(Spacer(1, 0.15*inch))
+    
+    # Footer
+    story.append(Spacer(1, 0.3*inch))
+    story.append(Paragraph("<i>This report is generated for informational purposes and does not constitute legal advice. Please consult with a qualified legal professional.</i>", 
+                          ParagraphStyle('Footer', parent=normal_style, fontSize=8, textColor=colors.grey)))
+    
+    doc.build(story)
+    buffer.seek(0)
+    return buffer.read()
 # ============== ROUTES ==============
 
 @app.get("/health")
@@ -331,3 +478,34 @@ def list_documents(db: Session = Depends(get_db)):
         }
         for d in docs
     ]
+@app.get("/api/v1/compliance/report/{document_id}")
+def download_report(document_id: int, db: Session = Depends(get_db)):
+    doc = db.query(DocumentDB).filter(DocumentDB.id == document_id).first()
+    gaps = db.query(ComplianceGapDB).filter(ComplianceGapDB.document_id == document_id).all()
+    
+    if not doc:
+        return {"error": "Document not found"}
+    
+    analysis = {
+        "overall_score": doc.compliance_score or 0,
+        "status": "Compliant" if (doc.compliance_score or 0) >= 80 else "Needs Improvement"
+    }
+    
+    gaps_list = [
+        type('Gap', (), {
+            'regulation': g.regulation,
+            'section': g.section,
+            'severity': g.severity,
+            'description': g.description,
+            'suggestion': g.suggestion
+        })()
+        for g in gaps
+    ]
+    
+    pdf_bytes = generate_pdf_report(doc.original_name, analysis, gaps_list)
+    
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f"attachment; filename=compliance-report-{document_id}.pdf"}
+    )
