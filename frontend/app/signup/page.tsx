@@ -5,6 +5,8 @@ import { useAuth } from "../context/AuthContext";
 import { useRouter } from "next/navigation";
 import { Shield, Mail, Lock, User, Building2, Loader2 } from "lucide-react";
 
+const API_URL = "https://compliance-ai-2xa8.onrender.com";
+
 export default function SignupPage() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -12,7 +14,7 @@ export default function SignupPage() {
   const [companyName, setCompanyName] = useState("");
   const [error, setError] = useState("");
   const [isLoading, setIsLoading] = useState(false);
-  const { signup, login } = useAuth();
+  const { login } = useAuth();
   const router = useRouter();
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -20,14 +22,41 @@ export default function SignupPage() {
     setError("");
     setIsLoading(true);
 
-    const signupSuccess = await signup(email, password, fullName, companyName);
-    if (signupSuccess) {
+    try {
+      const formData = new URLSearchParams();
+      formData.append("email", email);
+      formData.append("password", password);
+      formData.append("full_name", fullName);
+      formData.append("company_name", companyName);
+
+      console.log("Sending signup request to:", `${API_URL}/api/v1/auth/register`);
+
+      const res = await fetch(`${API_URL}/api/v1/auth/register`, {
+        method: "POST",
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        body: formData,
+      });
+
+      const data = await res.json();
+      console.log("Signup response:", res.status, data);
+
+      if (!res.ok) {
+        setError(data.detail || `Error ${res.status}: Failed to create account`);
+        setIsLoading(false);
+        return;
+      }
+
+      // Auto-login after signup
       const loginSuccess = await login(email, password);
       if (loginSuccess) {
         router.push("/");
+      } else {
+        setError("Account created! Please sign in manually.");
+        router.push("/login");
       }
-    } else {
-      setError("Failed to create account. Email may already exist.");
+    } catch (err) {
+      console.error("Signup error:", err);
+      setError("Network error. Check console for details.");
     }
     setIsLoading(false);
   };
