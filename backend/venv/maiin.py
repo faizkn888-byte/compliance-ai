@@ -13,7 +13,7 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=[
         "http://localhost:3000",
-        "https://compliance-ai-xi.vercel.app/",  # Your actual Vercel URL after deploy
+        "https://compliance-8oodz5kvo-faizkn.vercel.app",
     ],
     allow_credentials=True,
     allow_methods=["*"],
