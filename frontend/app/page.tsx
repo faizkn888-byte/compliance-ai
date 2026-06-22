@@ -350,13 +350,20 @@ const handleDownloadReport = () => {
                         <AlertTriangle className="h-5 w-5 text-orange-600" />
                         Compliance Gaps ({analysis.gaps.length})
                       </h2>
-                      <button 
+<button 
   onClick={handleGenerateFix}
   disabled={isAnalyzing}
   className="text-sm bg-blue-600 text-white px-3 py-1.5 rounded-md hover:bg-blue-700 flex items-center gap-1 disabled:opacity-50"
 >
   <Wand2 className="h-3.5 w-3.5" />
   Generate Fix
+</button>
+<button 
+  onClick={handleDownloadReport}
+  className="text-sm bg-purple-600 text-white px-3 py-1.5 rounded-md hover:bg-purple-700 flex items-center gap-1"
+>
+  <Download className="h-3.5 w-3.5" />
+  Download Report
 </button>
 <button 
   onClick={handleDownloadReport}
@@ -456,3 +463,7 @@ const handleDownloadReport = () => {
     </div>
   );
 }
+const handleDownloadReport = () => {
+  if (!selectedDoc) return;
+  window.open(`https://compliance-ai-2xa8.onrender.com/api/v1/compliance/report/${selectedDoc}`, '_blank');
+};

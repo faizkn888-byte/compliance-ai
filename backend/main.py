@@ -1,70 +1,39 @@
+from fastapi import FastAPI, UploadFile, File, Depends, Response
+from fastapi.middleware.cors import CORSMiddleware
+import shutil
+import os
+import io
 from datetime import datetime
+from sqlalchemy.orm import Session
+from PyPDF2 import PdfReader
+import docx
+
 from reportlab.lib.pagesizes import letter
 from reportlab.lib import colors
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib.units import inch
-from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, ListFlowable, ListItem
-from reportlab.lib.enums import TA_CENTER, TA_LEFT
-import io
-from fastapi import Response
-from fastapi import FastAPI, UploadFile, File, Depends
-from fastapi.middleware.cors import CORSMiddleware
-import shutil
-import os
-from sqlalchemy.orm import Session
-from PyPDF2 import PdfReader
-import docx
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
+from reportlab.lib.enums import TA_CENTER
 
 from database import get_db, DocumentDB, ComplianceGapDB
 
 app = FastAPI(
     title="Compliance AI API",
-    version="0.2.0",
+    version="0.3.0",
     description="AI-powered compliance for Indian businesses"
 )
 
 app.add_middleware(
     CORSMiddleware,
-allow_origins=[
-    "http://localhost:3000",
-    "https://compliance-3vb2wlt7n-faizkn.vercel.app",  # Your actual Vercel URL
-],
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
 os.makedirs("uploads", exist_ok=True)
-@app.post("/api/v1/documents/upload")
-async def upload_document(
-    file: UploadFile = File(...), 
-    doc_type: str = "privacy_policy",
-    db: Session = Depends(get_db)
-):
-    file_path = f"uploads/{file.filename}"
-    with open(file_path, "wb") as buffer:
-        shutil.copyfileobj(file.file, buffer)
-    
-    text = extract_text(file_path)
-    
-    db_doc = DocumentDB(
-        filename=file.filename,
-        original_name=file.filename,
-        extracted_text=text[:10000],
-        status="pending"
-    )
-    db.add(db_doc)
-    db.commit()
-    db.refresh(db_doc)
-    
-    return {
-        "id": db_doc.id,
-        "filename": file.filename,
-        "status": "pending",
-        "message": f"Saved {file.filename}. Read {len(text)} characters.",
-        "type": doc_type
-    }
-# ============== REGULATIONS DATABASE ==============
+
+# ============== REGULATIONS ==============
 
 REGULATIONS = {
     "dpdp": {
@@ -78,27 +47,10 @@ REGULATIONS = {
             ("Grievance Officer", ["grievance officer", "complaint", "redressal", "contact"], "Section 12", "Up to ₹100 crore"),
             ("Cross-border Transfer", ["cross-border", "foreign", "transfer outside india", "adequate protection"], "Section 16", "Up to ₹250 crore"),
         ]
-    },
-    "rbi_cyber": {
-        "name": "RBI Cyber Security Framework",
-        "checks": [
-            ("Cyber Security Policy", ["cyber security policy", "information security", "infosec"], "Framework 1.1", "Up to ₹5 crore"),
-            ("Incident Response", ["incident response", "cyber incident", "security incident"], "Framework 3.1", "Up to ₹2 crore"),
-            ("IT Governance", ["it governance", "board oversight", "risk management"], "Framework 2.1", "Up to ₹3 crore"),
-            ("Data Localization", ["data localization", "data within india", "domestic storage"], "Framework 5.2", "Up to ₹5 crore"),
-        ]
-    },
-    "cert_in": {
-        "name": "CERT-In Directions",
-        "checks": [
-            ("Incident Reporting", ["cert-in", "report incident", "incident reporting"], "Direction 1", "Up to ₹1 lakh per incident"),
-            ("Log Retention", ["log retention", "preserve logs", "180 days"], "Direction 2", "Up to ₹1 lakh"),
-            ("Data Breach Timeline", ["6 hours", "report within 6 hours"], "Direction 3", "Up to ₹1 lakh"),
-        ]
     }
 }
 
-# ============== TEXT EXTRACTION ==============
+# ============== HELPERS ==============
 
 def extract_text(file_path: str) -> str:
     if file_path.endswith(".pdf"):
@@ -118,8 +70,6 @@ def extract_text(file_path: str) -> str:
             return f.read()
     return ""
 
-# ============== SMART ANALYSIS ==============
-
 def analyze_text_smart(text: str, regulation_type: str = "dpdp"):
     text_lower = text.lower()
     reg = REGULATIONS.get(regulation_type, REGULATIONS["dpdp"])
@@ -138,7 +88,7 @@ def analyze_text_smart(text: str, regulation_type: str = "dpdp"):
             gaps.append({
                 "regulation": reg["name"],
                 "section": section,
-                "severity": "high" if category in ["Consent", "Breach Notification", "Cyber Security Policy"] else "medium",
+                "severity": "high" if category in ["Consent", "Breach Notification"] else "medium",
                 "description": f"Missing or insufficient {category.lower()} clauses. {category} is required under {reg['name']}.",
                 "suggestion": f"Add a dedicated section covering {category.lower()} with specific procedures, timelines, and responsible personnel."
             })
@@ -155,8 +105,8 @@ def analyze_text_smart(text: str, regulation_type: str = "dpdp"):
     breakdown = []
     for category, keywords, section, penalty in reg["checks"]:
         found = any(kw in text_lower for kw in keywords)
-        item_score = 100 if found else (0 if category in ["Consent", "Breach Notification", "Cyber Security Policy"] else 30)
-        item_status = "pass" if found else ("fail" if category in ["Consent", "Breach Notification", "Cyber Security Policy"] else "warning")
+        item_score = 100 if found else (0 if category in ["Consent", "Breach Notification"] else 30)
+        item_status = "pass" if found else ("fail" if category in ["Consent", "Breach Notification"] else "warning")
         breakdown.append({
             "label": category,
             "status": item_status,
@@ -172,59 +122,22 @@ def analyze_text_smart(text: str, regulation_type: str = "dpdp"):
         "regulation_type": regulation_type
     }
 
-# ============== FIX GENERATOR ==============
-
 def generate_fix_policy(original_text: str, gaps: list) -> str:
-    """Generate a basic fixed privacy policy based on gaps found"""
-    
     fixes = {
-        "Consent": """
-1. CONSENT
-By using our services, you provide free, specific, informed, unconditional, and unambiguous consent to the collection and processing of your personal data. You may withdraw consent at any time by contacting us.""",
-        "Notice": """
-2. NOTICE
-We collect your personal data for the following specific purposes: [list purposes]. We inform you of the nature of personal data collected, purpose of processing, and your rights before or at the time of collection.""",
-        "Data Retention": """
-3. DATA RETENTION
-We retain personal data only as long as necessary for the specified purpose. Customer data is retained for 3 years after account closure. Financial records are retained for 7 years as required by law. Data is securely deleted thereafter.""",
-        "Breach Notification": """
-4. DATA BREACH NOTIFICATION
-In the event of a personal data breach, we will:
-- Notify the Data Protection Board of India within 72 hours of becoming aware
-- Inform affected data principals without undue delay
-- Document all breaches including facts, effects, and remedial actions taken""",
-        "Data Principal Rights": """
-5. DATA PRINCIPAL RIGHTS
-You have the following rights under the DPDP Act 2023:
-- Right to access your personal data
-- Right to correction and erasure
-- Right to grievance redressal
-- Right to nominate another individual
-To exercise these rights, contact our Grievance Officer.""",
-        "Grievance Officer": """
-6. GRIEVANCE OFFICER
-Name: [Insert Name]
-Email: grievance@company.com
-Phone: [Insert Phone]
-Address: [Insert Address]
-Response Time: 30 days from date of receipt""",
-        "Cross-border Transfer": """
-7. CROSS-BORDER DATA TRANSFERS
-We ensure that personal data transferred outside India is subject to adequate protection. We rely on:
-- Government notifications of adequate countries
-- Standard contractual clauses approved by the Data Protection Board
-- Your explicit consent for specific transfers"""
+        "Consent": "1. CONSENT\nBy using our services, you provide free, specific, informed, unconditional, and unambiguous consent to the collection and processing of your personal data. You may withdraw consent at any time by contacting us.",
+        "Notice": "2. NOTICE\nWe collect your personal data for the following specific purposes: [list purposes]. We inform you of the nature of personal data collected, purpose of processing, and your rights before or at the time of collection.",
+        "Data Retention": "3. DATA RETENTION\nWe retain personal data only as long as necessary for the specified purpose. Customer data is retained for 3 years after account closure. Financial records are retained for 7 years as required by law. Data is securely deleted thereafter.",
+        "Breach Notification": "4. DATA BREACH NOTIFICATION\nIn the event of a personal data breach, we will:\n- Notify the Data Protection Board of India within 72 hours of becoming aware\n- Inform affected data principals without undue delay\n- Document all breaches including facts, effects, and remedial actions taken",
+        "Data Principal Rights": "5. DATA PRINCIPAL RIGHTS\nYou have the following rights under the DPDP Act 2023:\n- Right to access your personal data\n- Right to correction and erasure\n- Right to grievance redressal\n- Right to nominate another individual\nTo exercise these rights, contact our Grievance Officer.",
+        "Grievance Officer": "6. GRIEVANCE OFFICER\nName: [Insert Name]\nEmail: grievance@company.com\nPhone: [Insert Phone]\nAddress: [Insert Address]\nResponse Time: 30 days from date of receipt",
+        "Cross-border Transfer": "7. CROSS-BORDER DATA TRANSFERS\nWe ensure that personal data transferred outside India is subject to adequate protection. We rely on:\n- Government notifications of adequate countries\n- Standard contractual clauses approved by the Data Protection Board\n- Your explicit consent for specific transfers"
     }
     
     fixed_policy = "PRIVACY POLICY\n\nLast Updated: 2024\n\n"
-    
-    # Add original text sections that don't need fixing
     fixed_policy += original_text[:500] if original_text else ""
     fixed_policy += "\n\n--- COMPLIANCE FIXES ---\n"
     
-    # Add fixes for each gap
     for gap in gaps:
-        category = gap.get("section", "").split(" ")[0] if "section" in gap else ""
         for fix_name, fix_text in fixes.items():
             if fix_name.lower() in gap.get("description", "").lower():
                 fixed_policy += fix_text + "\n\n"
@@ -232,8 +145,8 @@ We ensure that personal data transferred outside India is subject to adequate pr
     fixed_policy += "\n\n--- END OF POLICY ---\n\nThis is a generated template. Please review with your legal counsel before use."
     
     return fixed_policy
+
 def generate_pdf_report(document_name: str, analysis: dict, gaps: list) -> bytes:
-    """Generate a professional PDF compliance report"""
     buffer = io.BytesIO()
     doc = SimpleDocTemplate(buffer, pagesize=letter,
                            rightMargin=72, leftMargin=72,
@@ -241,7 +154,6 @@ def generate_pdf_report(document_name: str, analysis: dict, gaps: list) -> bytes
     
     styles = getSampleStyleSheet()
     
-    # Custom styles
     title_style = ParagraphStyle(
         'CustomTitle',
         parent=styles['Heading1'],
@@ -264,7 +176,6 @@ def generate_pdf_report(document_name: str, analysis: dict, gaps: list) -> bytes
     normal_style.fontSize = 10
     normal_style.leading = 14
     
-    # Build content
     story = []
     
     # Title
@@ -283,10 +194,10 @@ def generate_pdf_report(document_name: str, analysis: dict, gaps: list) -> bytes
     status = "COMPLIANT" if score >= 80 else "NEEDS IMPROVEMENT" if score >= 60 else "NON-COMPLIANT"
     
     score_data = [
-        [Paragraph(f"<b>Compliance Score</b>", normal_style), 
-         Paragraph(f"<b>Status</b>", normal_style)],
-        [Paragraph(f"<font size=32 color={score_color.hexval()}>{score}%</font>", normal_style),
-         Paragraph(f"<font size=16 color={score_color.hexval()}>{status}</font>", normal_style)]
+        [Paragraph("<b>Compliance Score</b>", normal_style), 
+         Paragraph("<b>Status</b>", normal_style)],
+        [Paragraph(f"<font size=32 color='{score_color.hexval()}'>{score}%</font>", normal_style),
+         Paragraph(f"<font size=16 color='{score_color.hexval()}'>{status}</font>", normal_style)]
     ]
     
     score_table = Table(score_data, colWidths=[3*inch, 3*inch])
@@ -307,19 +218,27 @@ def generate_pdf_report(document_name: str, analysis: dict, gaps: list) -> bytes
     story.append(score_table)
     story.append(Spacer(1, 0.3*inch))
     
+    # Breakdown
+    if analysis.get("breakdown"):
+        story.append(Paragraph("Score Breakdown", heading_style))
+        for item in analysis["breakdown"]:
+            color = colors.green if item["score"] >= 80 else colors.orange if item["score"] >= 60 else colors.red
+            story.append(Paragraph(f"• <b>{item['label']}</b>: {item['score']}%", normal_style))
+        story.append(Spacer(1, 0.2*inch))
+    
     # Gaps section
     if gaps:
         story.append(Paragraph("Compliance Gaps", heading_style))
         story.append(Spacer(1, 0.1*inch))
         
         for gap in gaps:
-            severity_color = colors.red if gap.severity == "high" else colors.orange if gap.severity == "medium" else colors.blue
+            severity_color = colors.red if gap["severity"] == "high" else colors.orange if gap["severity"] == "medium" else colors.blue
             
             gap_data = [
-                [Paragraph(f"<b>{gap.regulation} — {gap.section}</b>", normal_style)],
-                [Paragraph(f"<b>Severity:</b> <font color={severity_color.hexval()}>{gap.severity.upper()}</font>", normal_style)],
-                [Paragraph(f"<b>Issue:</b> {gap.description}", normal_style)],
-                [Paragraph(f"<b>Recommendation:</b> {gap.suggestion}", normal_style)]
+                [Paragraph(f"<b>{gap['regulation']} — {gap['section']}</b>", normal_style)],
+                [Paragraph(f"<b>Severity:</b> <font color='{severity_color.hexval()}'>{gap['severity'].upper()}</font>", normal_style)],
+                [Paragraph(f"<b>Issue:</b> {gap['description']}", normal_style)],
+                [Paragraph(f"<b>Recommendation:</b> {gap['suggestion']}", normal_style)]
             ]
             
             gap_table = Table(gap_data, colWidths=[6*inch])
@@ -335,6 +254,13 @@ def generate_pdf_report(document_name: str, analysis: dict, gaps: list) -> bytes
             story.append(gap_table)
             story.append(Spacer(1, 0.15*inch))
     
+    # Passed items
+    if analysis.get("passed"):
+        story.append(Paragraph("Passed Checks", heading_style))
+        for item in analysis["passed"]:
+            story.append(Paragraph(f"✓ {item}", normal_style))
+        story.append(Spacer(1, 0.2*inch))
+    
     # Footer
     story.append(Spacer(1, 0.3*inch))
     story.append(Paragraph("<i>This report is generated for informational purposes and does not constitute legal advice. Please consult with a qualified legal professional.</i>", 
@@ -343,21 +269,12 @@ def generate_pdf_report(document_name: str, analysis: dict, gaps: list) -> bytes
     doc.build(story)
     buffer.seek(0)
     return buffer.read()
+
 # ============== ROUTES ==============
 
 @app.get("/health")
 def health_check():
-    return {"status": "ok", "version": "0.2.0"}
-
-@app.get("/api/v1/regulations")
-def list_regulations():
-    return {
-        "available": [
-            {"id": "dpdp", "name": "DPDP Act 2023", "checks": 7},
-            {"id": "rbi_cyber", "name": "RBI Cyber Security Framework", "checks": 4},
-            {"id": "cert_in", "name": "CERT-In Directions", "checks": 3},
-        ]
-    }
+    return {"status": "ok", "version": "0.3.0"}
 
 @app.post("/api/v1/documents/upload")
 async def upload_document(file: UploadFile = File(...), db: Session = Depends(get_db)):
@@ -393,7 +310,6 @@ def analyze_document(document_id: int, regulation: str = "dpdp", db: Session = D
     text = doc.extracted_text or ""
     result = analyze_text_smart(text, regulation)
     
-    # Clear old gaps
     db.query(ComplianceGapDB).filter(ComplianceGapDB.document_id == document_id).delete()
     
     for gap in result["gaps"]:
@@ -423,7 +339,6 @@ def analyze_document(document_id: int, regulation: str = "dpdp", db: Session = D
 @app.get("/api/v1/compliance/score/{document_id}")
 def get_score(document_id: int, db: Session = Depends(get_db)):
     doc = db.query(DocumentDB).filter(DocumentDB.id == document_id).first()
-    gaps = db.query(ComplianceGapDB).filter(ComplianceGapDB.document_id == document_id).all()
     
     if not doc:
         return {"error": "Document not found"}
@@ -447,16 +362,7 @@ def generate_fix(document_id: int, db: Session = Depends(get_db)):
     if not doc:
         return {"error": "Document not found"}
     
-    gaps_list = [
-        {
-            "regulation": g.regulation,
-            "section": g.section,
-            "description": g.description,
-            "suggestion": g.suggestion
-        }
-        for g in gaps
-    ]
-    
+    gaps_list = [{"description": g.description} for g in gaps]
     fixed = generate_fix_policy(doc.extracted_text or "", gaps_list)
     
     return {
@@ -464,6 +370,42 @@ def generate_fix(document_id: int, db: Session = Depends(get_db)):
         "fixed_policy": fixed,
         "gaps_fixed": len(gaps_list)
     }
+
+@app.get("/api/v1/compliance/report/{document_id}")
+def download_report(document_id: int, db: Session = Depends(get_db)):
+    doc = db.query(DocumentDB).filter(DocumentDB.id == document_id).first()
+    gaps = db.query(ComplianceGapDB).filter(ComplianceGapDB.document_id == document_id).all()
+    
+    if not doc:
+        return {"error": "Document not found"}
+    
+    analysis = {
+        "overall_score": doc.compliance_score or 0,
+        "status": "Compliant" if (doc.compliance_score or 0) >= 80 else "Needs Improvement",
+        "breakdown": [
+            {"label": "Consent", "status": "pass", "score": 100},
+            {"label": "Data Retention", "status": "warning", "score": 50},
+        ]
+    }
+    
+    gaps_list = [
+        {
+            "regulation": g.regulation,
+            "section": g.section,
+            "severity": g.severity,
+            "description": g.description,
+            "suggestion": g.suggestion
+        }
+        for g in gaps
+    ]
+    
+    pdf_bytes = generate_pdf_report(doc.original_name, analysis, gaps_list)
+    
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f"attachment; filename=compliance-report-{document_id}.pdf"}
+    )
 
 @app.get("/api/v1/documents")
 def list_documents(db: Session = Depends(get_db)):
@@ -478,34 +420,3 @@ def list_documents(db: Session = Depends(get_db)):
         }
         for d in docs
     ]
-@app.get("/api/v1/compliance/report/{document_id}")
-def download_report(document_id: int, db: Session = Depends(get_db)):
-    doc = db.query(DocumentDB).filter(DocumentDB.id == document_id).first()
-    gaps = db.query(ComplianceGapDB).filter(ComplianceGapDB.document_id == document_id).all()
-    
-    if not doc:
-        return {"error": "Document not found"}
-    
-    analysis = {
-        "overall_score": doc.compliance_score or 0,
-        "status": "Compliant" if (doc.compliance_score or 0) >= 80 else "Needs Improvement"
-    }
-    
-    gaps_list = [
-        type('Gap', (), {
-            'regulation': g.regulation,
-            'section': g.section,
-            'severity': g.severity,
-            'description': g.description,
-            'suggestion': g.suggestion
-        })()
-        for g in gaps
-    ]
-    
-    pdf_bytes = generate_pdf_report(doc.original_name, analysis, gaps_list)
-    
-    return Response(
-        content=pdf_bytes,
-        media_type="application/pdf",
-        headers={"Content-Disposition": f"attachment; filename=compliance-report-{document_id}.pdf"}
-    )
