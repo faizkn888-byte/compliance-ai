@@ -11,12 +11,14 @@ app = FastAPI(
 # This lets the frontend talk to the backend (like a phone line between kitchen and counter)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000"],  # The frontend address
+    allow_origins=[
+        "http://localhost:3000",
+        "https://compliance-ai-xxx.vercel.app",  # Your actual Vercel URL after deploy
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
 # A simple test — when someone visits /health, we say "I'm alive!"
 @app.get("/health")
 def health_check():
