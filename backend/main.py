@@ -1,9 +1,12 @@
-from fastapi import FastAPI, UploadFile, File, Depends, Response
+from fastapi import FastAPI, UploadFile, File, Depends, Response, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
+from jose import JWTError, jwt
+from datetime import datetime, timedelta
 import shutil
 import os
 import io
-from datetime import datetime
+
 from sqlalchemy.orm import Session
 from PyPDF2 import PdfReader
 import docx
@@ -15,11 +18,16 @@ from reportlab.lib.units import inch
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
 from reportlab.lib.enums import TA_CENTER
 
-from database import get_db, DocumentDB, ComplianceGapDB
+from database import get_db, get_password_hash, verify_password, UserDB, DocumentDB, ComplianceGapDB
+
+# JWT Config
+SECRET_KEY = "your-super-secret-key-change-this-in-production"
+ALGORITHM = "HS256"
+ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 24  # 1 day
 
 app = FastAPI(
     title="Compliance AI API",
-    version="0.3.0",
+    version="0.4.0",
     description="AI-powered compliance for Indian businesses"
 )
 
@@ -32,6 +40,35 @@ app.add_middleware(
 )
 
 os.makedirs("uploads", exist_ok=True)
+
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/v1/auth/login")
+
+# ============== AUTH HELPERS ==============
+
+def create_access_token(data: dict):
+    to_encode = data.copy()
+    expire = datetime.utcnow() + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
+    to_encode.update({"exp": expire})
+    return jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
+
+def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(get_db)):
+    credentials_exception = HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Could not validate credentials",
+        headers={"WWW-Authenticate": "Bearer"},
+    )
+    try:
+        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        user_id: str = payload.get("sub")
+        if user_id is None:
+            raise credentials_exception
+    except JWTError:
+        raise credentials_exception
+    
+    user = db.query(UserDB).filter(UserDB.id == int(user_id)).first()
+    if user is None:
+        raise credentials_exception
+    return user
 
 # ============== REGULATIONS ==============
 
@@ -155,21 +192,15 @@ def generate_pdf_report(document_name: str, analysis: dict, gaps: list) -> bytes
     styles = getSampleStyleSheet()
     
     title_style = ParagraphStyle(
-        'CustomTitle',
-        parent=styles['Heading1'],
-        fontSize=24,
-        textColor=colors.HexColor('#1e40af'),
-        spaceAfter=30,
-        alignment=TA_CENTER
+        'CustomTitle', parent=styles['Heading1'],
+        fontSize=24, textColor=colors.HexColor('#1e40af'),
+        spaceAfter=30, alignment=TA_CENTER
     )
     
     heading_style = ParagraphStyle(
-        'CustomHeading',
-        parent=styles['Heading2'],
-        fontSize=14,
-        textColor=colors.HexColor('#1e40af'),
-        spaceAfter=12,
-        spaceBefore=12
+        'CustomHeading', parent=styles['Heading2'],
+        fontSize=14, textColor=colors.HexColor('#1e40af'),
+        spaceAfter=12, spaceBefore=12
     )
     
     normal_style = styles["Normal"]
@@ -177,18 +208,13 @@ def generate_pdf_report(document_name: str, analysis: dict, gaps: list) -> bytes
     normal_style.leading = 14
     
     story = []
-    
-    # Title
     story.append(Paragraph("DPDP Compliance Report", title_style))
     story.append(Spacer(1, 0.2*inch))
-    
-    # Document info
     story.append(Paragraph(f"<b>Document:</b> {document_name}", normal_style))
     story.append(Paragraph(f"<b>Date:</b> {datetime.now().strftime('%B %d, %Y')}", normal_style))
     story.append(Paragraph(f"<b>Regulation:</b> DPDP Act 2023", normal_style))
     story.append(Spacer(1, 0.3*inch))
     
-    # Score section
     score = analysis.get("overall_score", 0)
     score_color = colors.green if score >= 80 else colors.orange if score >= 60 else colors.red
     status = "COMPLIANT" if score >= 80 else "NEEDS IMPROVEMENT" if score >= 60 else "NON-COMPLIANT"
@@ -203,13 +229,8 @@ def generate_pdf_report(document_name: str, analysis: dict, gaps: list) -> bytes
     score_table = Table(score_data, colWidths=[3*inch, 3*inch])
     score_table.setStyle(TableStyle([
         ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#f3f4f6')),
-        ('TEXTCOLOR', (0, 0), (-1, 0), colors.black),
         ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
         ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
-        ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
-        ('FONTSIZE', (0, 0), (-1, 0), 12),
-        ('BOTTOMPADDING', (0, 0), (-1, 0), 12),
-        ('BACKGROUND', (0, 1), (-1, -1), colors.white),
         ('GRID', (0, 0), (-1, -1), 1, colors.grey),
         ('TOPPADDING', (0, 1), (-1, -1), 20),
         ('BOTTOMPADDING', (0, 1), (-1, -1), 20),
@@ -218,7 +239,6 @@ def generate_pdf_report(document_name: str, analysis: dict, gaps: list) -> bytes
     story.append(score_table)
     story.append(Spacer(1, 0.3*inch))
     
-    # Breakdown
     if analysis.get("breakdown"):
         story.append(Paragraph("Score Breakdown", heading_style))
         for item in analysis["breakdown"]:
@@ -226,7 +246,6 @@ def generate_pdf_report(document_name: str, analysis: dict, gaps: list) -> bytes
             story.append(Paragraph(f"• <b>{item['label']}</b>: {item['score']}%", normal_style))
         story.append(Spacer(1, 0.2*inch))
     
-    # Gaps section
     if gaps:
         story.append(Paragraph("Compliance Gaps", heading_style))
         story.append(Spacer(1, 0.1*inch))
@@ -254,14 +273,12 @@ def generate_pdf_report(document_name: str, analysis: dict, gaps: list) -> bytes
             story.append(gap_table)
             story.append(Spacer(1, 0.15*inch))
     
-    # Passed items
     if analysis.get("passed"):
         story.append(Paragraph("Passed Checks", heading_style))
         for item in analysis["passed"]:
             story.append(Paragraph(f"✓ {item}", normal_style))
         story.append(Spacer(1, 0.2*inch))
     
-    # Footer
     story.append(Spacer(1, 0.3*inch))
     story.append(Paragraph("<i>This report is generated for informational purposes and does not constitute legal advice. Please consult with a qualified legal professional.</i>", 
                           ParagraphStyle('Footer', parent=normal_style, fontSize=8, textColor=colors.grey)))
@@ -270,14 +287,71 @@ def generate_pdf_report(document_name: str, analysis: dict, gaps: list) -> bytes
     buffer.seek(0)
     return buffer.read()
 
-# ============== ROUTES ==============
+# ============== AUTH ROUTES ==============
 
-@app.get("/health")
-def health_check():
-    return {"status": "ok", "version": "0.3.0"}
+@app.post("/api/v1/auth/register")
+def register(email: str, password: str, full_name: str = "", company_name: str = "", db: Session = Depends(get_db)):
+    # Check if user exists
+    db_user = db.query(UserDB).filter(UserDB.email == email).first()
+    if db_user:
+        raise HTTPException(status_code=400, detail="Email already registered")
+    
+    hashed_password = get_password_hash(password)
+    user = UserDB(
+        email=email,
+        hashed_password=hashed_password,
+        full_name=full_name,
+        company_name=company_name
+    )
+    db.add(user)
+    db.commit()
+    db.refresh(user)
+    
+    return {
+        "message": "User created successfully",
+        "user_id": user.id,
+        "email": user.email
+    }
+
+@app.post("/api/v1/auth/login")
+def login(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get_db)):
+    user = db.query(UserDB).filter(UserDB.email == form_data.username).first()
+    if not user or not verify_password(form_data.password, user.hashed_password):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Incorrect email or password",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    
+    access_token = create_access_token(data={"sub": str(user.id)})
+    return {
+        "access_token": access_token,
+        "token_type": "bearer",
+        "user": {
+            "id": user.id,
+            "email": user.email,
+            "full_name": user.full_name,
+            "company_name": user.company_name
+        }
+    }
+
+@app.get("/api/v1/auth/me")
+def get_me(current_user: UserDB = Depends(get_current_user)):
+    return {
+        "id": current_user.id,
+        "email": current_user.email,
+        "full_name": current_user.full_name,
+        "company_name": current_user.company_name
+    }
+
+# ============== DOCUMENT ROUTES (PROTECTED) ==============
 
 @app.post("/api/v1/documents/upload")
-async def upload_document(file: UploadFile = File(...), db: Session = Depends(get_db)):
+async def upload_document(
+    file: UploadFile = File(...), 
+    current_user: UserDB = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
     file_path = f"uploads/{file.filename}"
     with open(file_path, "wb") as buffer:
         shutil.copyfileobj(file.file, buffer)
@@ -288,7 +362,8 @@ async def upload_document(file: UploadFile = File(...), db: Session = Depends(ge
         filename=file.filename,
         original_name=file.filename,
         extracted_text=text[:10000],
-        status="pending"
+        status="pending",
+        owner_id=current_user.id
     )
     db.add(db_doc)
     db.commit()
@@ -301,11 +376,36 @@ async def upload_document(file: UploadFile = File(...), db: Session = Depends(ge
         "message": f"Saved {file.filename}. Read {len(text)} characters."
     }
 
+@app.get("/api/v1/documents")
+def list_documents(current_user: UserDB = Depends(get_current_user), db: Session = Depends(get_db)):
+    docs = db.query(DocumentDB).filter(DocumentDB.owner_id == current_user.id).all()
+    return [
+        {
+            "id": d.id,
+            "name": d.original_name,
+            "status": d.status,
+            "score": d.compliance_score,
+            "uploadedAt": d.created_at.isoformat() if d.created_at else ""
+        }
+        for d in docs
+    ]
+
+# ============== COMPLIANCE ROUTES (PROTECTED) ==============
+
 @app.post("/api/v1/compliance/analyze/{document_id}")
-def analyze_document(document_id: int, regulation: str = "dpdp", db: Session = Depends(get_db)):
-    doc = db.query(DocumentDB).filter(DocumentDB.id == document_id).first()
+def analyze_document(
+    document_id: int, 
+    regulation: str = "dpdp", 
+    current_user: UserDB = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    doc = db.query(DocumentDB).filter(
+        DocumentDB.id == document_id,
+        DocumentDB.owner_id == current_user.id
+    ).first()
+    
     if not doc:
-        return {"error": "Document not found"}
+        raise HTTPException(status_code=404, detail="Document not found")
     
     text = doc.extracted_text or ""
     result = analyze_text_smart(text, regulation)
@@ -337,11 +437,18 @@ def analyze_document(document_id: int, regulation: str = "dpdp", db: Session = D
     }
 
 @app.get("/api/v1/compliance/score/{document_id}")
-def get_score(document_id: int, db: Session = Depends(get_db)):
-    doc = db.query(DocumentDB).filter(DocumentDB.id == document_id).first()
+def get_score(
+    document_id: int, 
+    current_user: UserDB = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    doc = db.query(DocumentDB).filter(
+        DocumentDB.id == document_id,
+        DocumentDB.owner_id == current_user.id
+    ).first()
     
     if not doc:
-        return {"error": "Document not found"}
+        raise HTTPException(status_code=404, detail="Document not found")
     
     return {
         "document_id": document_id,
@@ -355,13 +462,20 @@ def get_score(document_id: int, db: Session = Depends(get_db)):
     }
 
 @app.post("/api/v1/compliance/generate-fix/{document_id}")
-def generate_fix(document_id: int, db: Session = Depends(get_db)):
-    doc = db.query(DocumentDB).filter(DocumentDB.id == document_id).first()
-    gaps = db.query(ComplianceGapDB).filter(ComplianceGapDB.document_id == document_id).all()
+def generate_fix(
+    document_id: int, 
+    current_user: UserDB = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    doc = db.query(DocumentDB).filter(
+        DocumentDB.id == document_id,
+        DocumentDB.owner_id == current_user.id
+    ).first()
     
     if not doc:
-        return {"error": "Document not found"}
+        raise HTTPException(status_code=404, detail="Document not found")
     
+    gaps = db.query(ComplianceGapDB).filter(ComplianceGapDB.document_id == document_id).all()
     gaps_list = [{"description": g.description} for g in gaps]
     fixed = generate_fix_policy(doc.extracted_text or "", gaps_list)
     
@@ -372,12 +486,20 @@ def generate_fix(document_id: int, db: Session = Depends(get_db)):
     }
 
 @app.get("/api/v1/compliance/report/{document_id}")
-def download_report(document_id: int, db: Session = Depends(get_db)):
-    doc = db.query(DocumentDB).filter(DocumentDB.id == document_id).first()
-    gaps = db.query(ComplianceGapDB).filter(ComplianceGapDB.document_id == document_id).all()
+def download_report(
+    document_id: int, 
+    current_user: UserDB = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    doc = db.query(DocumentDB).filter(
+        DocumentDB.id == document_id,
+        DocumentDB.owner_id == current_user.id
+    ).first()
     
     if not doc:
-        return {"error": "Document not found"}
+        raise HTTPException(status_code=404, detail="Document not found")
+    
+    gaps = db.query(ComplianceGapDB).filter(ComplianceGapDB.document_id == document_id).all()
     
     analysis = {
         "overall_score": doc.compliance_score or 0,
@@ -407,16 +529,6 @@ def download_report(document_id: int, db: Session = Depends(get_db)):
         headers={"Content-Disposition": f"attachment; filename=compliance-report-{document_id}.pdf"}
     )
 
-@app.get("/api/v1/documents")
-def list_documents(db: Session = Depends(get_db)):
-    docs = db.query(DocumentDB).all()
-    return [
-        {
-            "id": d.id,
-            "name": d.original_name,
-            "status": d.status,
-            "score": d.compliance_score,
-            "uploadedAt": d.created_at.isoformat() if d.created_at else ""
-        }
-        for d in docs
-    ]
+@app.get("/health")
+def health_check():
+    return {"status": "ok", "version": "0.4.0"}

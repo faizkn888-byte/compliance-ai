@@ -1,60 +1,72 @@
 "use client";
 
 import { useState, useCallback, useEffect } from "react";
+import { useRouter } from "next/navigation";
+import { useAuth } from "./context/AuthContext";
 import { useDropzone } from "react-dropzone";
-import { Upload, FileText, Shield, CheckCircle, AlertTriangle, AlertCircle, Clock, Zap, Loader2, Download, Wand2 } from "lucide-react";
+import { Upload, FileText, Shield, CheckCircle, AlertTriangle, AlertCircle, Clock, Zap, Loader2, Download, Wand2, LogOut, User } from "lucide-react";
+
+const API_URL = "https://compliance-ai-2xa8.onrender.com";
 
 export default function Home() {
+  const { user, token, logout, isLoading: authLoading } = useAuth();
+  const router = useRouter();
+  
   const [documents, setDocuments] = useState<any[]>([]);
   const [selectedDoc, setSelectedDoc] = useState<string | null>(null);
   const [analysis, setAnalysis] = useState<any>(null);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [generatedDoc, setGeneratedDoc] = useState<string | null>(null);
-const [docType, setDocType] = useState("privacy_policy");
-const [compareMode, setCompareMode] = useState(false);
-const [compareDoc, setCompareDoc] = useState<string | null>(null);
+
   useEffect(() => {
-    fetch("https://compliance-ai-2xa8.onrender.com/api/v1/documents")
-      .then(res => res.json())
-      .then(data => {
-        if (data.length > 0) {
-          const formatted = data.map((d: any) => ({
-            id: String(d.id),
-            name: d.name,
-            type: "other",
-            status: d.status,
-            score: d.score,
-            uploadedAt: d.uploadedAt ? d.uploadedAt.split("T")[0] : "2024-01-01",
-          }));
-          setDocuments(formatted);
+    if (!authLoading && !user) {
+      router.push("/login");
+    }
+  }, [authLoading, user, router]);
+
+  useEffect(() => {
+    if (token) {
+      fetchDocuments();
+    }
+  }, [token]);
+
+  const fetchDocuments = async () => {
+    try {
+      const res = await fetch(`${API_URL}/api/v1/documents`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (res.ok) {
+        const data = await res.json();
+        const formatted = data.map((d: any) => ({
+          id: String(d.id),
+          name: d.name,
+          type: "other",
+          status: d.status,
+          score: d.score,
+          uploadedAt: d.uploadedAt ? d.uploadedAt.split("T")[0] : "2024-01-01",
+        }));
+        setDocuments(formatted);
+        if (formatted.length > 0 && !selectedDoc) {
           setSelectedDoc(String(formatted[0].id));
         }
-      });
-  }, []);
-<div className="mb-4">
-  <label className="block text-sm font-medium text-gray-700 mb-1">Document Type</label>
-  <select 
-    value={docType}
-    onChange={(e) => setDocType(e.target.value)}
-    className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm"
-  >
-    <option value="privacy_policy">Privacy Policy</option>
-    <option value="vendor_agreement">Vendor Agreement</option>
-    <option value="employment_agreement">Employment Agreement</option>
-    <option value="cybersecurity_policy">Cybersecurity Policy</option>
-    <option value="incident_response">Incident Response Plan</option>
-  </select>
-</div>
+      }
+    } catch (error) {
+      console.error("Failed to fetch documents:", error);
+    }
+  };
+
   const onDrop = useCallback(async (acceptedFiles: File[]) => {
+    if (!token) return;
     const file = acceptedFiles[0];
     const formData = new FormData();
     formData.append("file", file);
 
     try {
-      const uploadRes = await fetch("https://compliance-ai-2xa8.onrender.com/api/v1/documents/upload", {
-  method: "POST",
-  body: formData,
-});
+      const uploadRes = await fetch(`${API_URL}/api/v1/documents/upload`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}` },
+        body: formData,
+      });
       const uploadData = await uploadRes.json();
 
       const newDocId = "doc-" + Date.now();
@@ -72,8 +84,9 @@ const [compareDoc, setCompareDoc] = useState<string | null>(null);
       setAnalysis(null);
       setGeneratedDoc(null);
 
-      const analyzeRes = await fetch(`https://compliance-ai-2xa8.onrender.com/api/v1/compliance/analyze/${uploadData.id}`, {
+      const analyzeRes = await fetch(`${API_URL}/api/v1/compliance/analyze/${uploadData.id}`, {
         method: "POST",
+        headers: { Authorization: `Bearer ${token}` },
       });
       const analyzeData = await analyzeRes.json();
 
@@ -90,9 +103,9 @@ const [compareDoc, setCompareDoc] = useState<string | null>(null);
     } catch (error) {
       console.error("Upload failed:", error);
       setIsAnalyzing(false);
-      alert("Upload failed. Make sure backend is running on port 8000.");
+      alert("Upload failed.");
     }
-  }, []);
+  }, [token]);
 
   const { getRootProps, getInputProps, isDragActive } = useDropzone({
     onDrop,
@@ -127,12 +140,13 @@ const [compareDoc, setCompareDoc] = useState<string | null>(null);
   const currentStatus = analysis?.status || (selectedDocument?.score >= 80 ? "Compliant" : selectedDocument?.score >= 60 ? "Needs Improvement" : "Non-Compliant");
 
   const handleGenerateFix = async () => {
-    if (!selectedDoc) return;
+    if (!selectedDoc || !token) return;
     setIsAnalyzing(true);
     
     try {
-      const res = await fetch(`https://compliance-ai-2xa8.onrender.com/api/v1/compliance/generate-fix/${selectedDoc}`, {
+      const res = await fetch(`${API_URL}/api/v1/compliance/generate-fix/${selectedDoc}`, {
         method: "POST",
+        headers: { Authorization: `Bearer ${token}` },
       });
       const data = await res.json();
       setGeneratedDoc(data.fixed_policy);
@@ -143,7 +157,12 @@ const [compareDoc, setCompareDoc] = useState<string | null>(null);
     }
   };
 
-  const handleDownload = () => {
+  const handleDownloadReport = () => {
+    if (!selectedDoc || !token) return;
+    window.open(`${API_URL}/api/v1/compliance/report/${selectedDoc}`, '_blank');
+  };
+
+  const handleDownloadFix = () => {
     if (!generatedDoc) return;
     const blob = new Blob([generatedDoc], { type: "text/plain" });
     const url = URL.createObjectURL(blob);
@@ -155,12 +174,20 @@ const [compareDoc, setCompareDoc] = useState<string | null>(null);
     document.body.removeChild(a);
     URL.revokeObjectURL(url);
   };
-const handleDownloadReport = () => {
-  if (!selectedDoc) return;
-  window.open(`https://compliance-ai-2xa8.onrender.com/api/v1/compliance/report/${selectedDoc}`, '_blank');
-};
+
+  if (authLoading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center">
+        <Loader2 className="h-8 w-8 text-blue-600 animate-spin" />
+      </div>
+    );
+  }
+
+  if (!user) return null;
+
   return (
     <div className="min-h-screen bg-gray-50">
+      {/* Header */}
       <header className="bg-white border-b border-gray-200 sticky top-0 z-10">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
           <div className="flex items-center gap-2">
@@ -168,18 +195,24 @@ const handleDownloadReport = () => {
             <h1 className="text-xl font-bold text-gray-900">Compliance AI</h1>
             <span className="text-xs bg-blue-100 text-blue-700 px-2 py-0.5 rounded-full font-medium">DPDP Act 2023</span>
           </div>
-          <nav className="flex items-center gap-4">
-            <button className="text-sm text-gray-600 hover:text-gray-900">Documents</button>
-            <button className="text-sm text-gray-600 hover:text-gray-900">Generated</button>
-            <button className="text-sm bg-blue-600 text-white px-3 py-1.5 rounded-md hover:bg-blue-700 flex items-center gap-1">
-              <Zap className="h-3.5 w-3.5" />
-              Upgrade
+          <div className="flex items-center gap-4">
+            <div className="flex items-center gap-2 text-sm text-gray-600">
+              <User className="h-4 w-4" />
+              {user.full_name || user.email}
+            </div>
+            <button 
+              onClick={logout}
+              className="text-sm text-gray-600 hover:text-red-600 flex items-center gap-1"
+            >
+              <LogOut className="h-4 w-4" />
+              Logout
             </button>
-          </nav>
+          </div>
         </div>
       </header>
 
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+        {/* Stats */}
         <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
           <div className="bg-white rounded-lg border shadow-sm p-6">
             <div className="flex items-center justify-between mb-2">
@@ -209,6 +242,7 @@ const handleDownloadReport = () => {
         </div>
 
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+          {/* Left Column */}
           <div className="lg:col-span-1 space-y-6">
             <div className="bg-white rounded-lg border shadow-sm p-6">
               <div
@@ -275,6 +309,7 @@ const handleDownloadReport = () => {
             </div>
           </div>
 
+          {/* Right Column */}
           <div className="lg:col-span-2 space-y-6">
             {isAnalyzing ? (
               <div className="bg-white rounded-lg border shadow-sm p-12 flex flex-col items-center justify-center">
@@ -350,28 +385,23 @@ const handleDownloadReport = () => {
                         <AlertTriangle className="h-5 w-5 text-orange-600" />
                         Compliance Gaps ({analysis.gaps.length})
                       </h2>
-<button 
-  onClick={handleGenerateFix}
-  disabled={isAnalyzing}
-  className="text-sm bg-blue-600 text-white px-3 py-1.5 rounded-md hover:bg-blue-700 flex items-center gap-1 disabled:opacity-50"
->
-  <Wand2 className="h-3.5 w-3.5" />
-  Generate Fix
-</button>
-<button 
-  onClick={handleDownloadReport}
-  className="text-sm bg-purple-600 text-white px-3 py-1.5 rounded-md hover:bg-purple-700 flex items-center gap-1"
->
-  <Download className="h-3.5 w-3.5" />
-  Download Report
-</button>
-<button 
-  onClick={handleDownloadReport}
-  className="text-sm bg-purple-600 text-white px-3 py-1.5 rounded-md hover:bg-purple-700 flex items-center gap-1"
->
-  <Download className="h-3.5 w-3.5" />
-  Download Report
-</button>
+                      <div className="flex gap-2">
+                        <button 
+                          onClick={handleGenerateFix}
+                          disabled={isAnalyzing}
+                          className="text-sm bg-blue-600 text-white px-3 py-1.5 rounded-md hover:bg-blue-700 flex items-center gap-1 disabled:opacity-50"
+                        >
+                          <Wand2 className="h-3.5 w-3.5" />
+                          Generate Fix
+                        </button>
+                        <button 
+                          onClick={handleDownloadReport}
+                          className="text-sm bg-purple-600 text-white px-3 py-1.5 rounded-md hover:bg-purple-700 flex items-center gap-1"
+                        >
+                          <Download className="h-3.5 w-3.5" />
+                          Download Report
+                        </button>
+                      </div>
                     </div>
                     
                     <div className="space-y-4">
@@ -433,7 +463,7 @@ const handleDownloadReport = () => {
                         Fixed Privacy Policy
                       </h2>
                       <button 
-                        onClick={handleDownload}
+                        onClick={handleDownloadFix}
                         className="text-sm bg-green-600 text-white px-3 py-1.5 rounded-md hover:bg-green-700 flex items-center gap-1"
                       >
                         <Download className="h-3.5 w-3.5" />
@@ -463,7 +493,3 @@ const handleDownloadReport = () => {
     </div>
   );
 }
-const handleDownloadReport = () => {
-  if (!selectedDoc) return;
-  window.open(`https://compliance-ai-2xa8.onrender.com/api/v1/compliance/report/${selectedDoc}`, '_blank');
-};

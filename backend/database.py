@@ -1,12 +1,29 @@
-from sqlalchemy import create_engine, Column, Integer, String, Float, DateTime, Text
+from sqlalchemy import create_engine, Column, Integer, String, Float, DateTime, Text, ForeignKey
 from sqlalchemy.ext.declarative import declarative_base
-from sqlalchemy.orm import sessionmaker
+from sqlalchemy.orm import sessionmaker, relationship
 from datetime import datetime
+from passlib.context import CryptContext
 
-# Create SQLite database file (compliance.db will appear in your backend folder)
+# Password hashing
+pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+
+# Create SQLite database
 engine = create_engine("sqlite:///./compliance.db", connect_args={"check_same_thread": False})
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()
+
+class UserDB(Base):
+    __tablename__ = "users"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    email = Column(String, unique=True, index=True, nullable=False)
+    hashed_password = Column(String, nullable=False)
+    full_name = Column(String)
+    company_name = Column(String)
+    is_active = Column(Integer, default=1)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    
+    documents = relationship("DocumentDB", back_populates="owner")
 
 class DocumentDB(Base):
     __tablename__ = "documents"
@@ -17,7 +34,10 @@ class DocumentDB(Base):
     extracted_text = Column(Text)
     compliance_score = Column(Float, default=0)
     status = Column(String, default="pending")
+    owner_id = Column(Integer, ForeignKey("users.id"))
     created_at = Column(DateTime, default=datetime.utcnow)
+    
+    owner = relationship("UserDB", back_populates="documents")
 
 class ComplianceGapDB(Base):
     __tablename__ = "gaps"
@@ -39,3 +59,9 @@ def get_db():
         yield db
     finally:
         db.close()
+
+def verify_password(plain_password, hashed_password):
+    return pwd_context.verify(plain_password, hashed_password)
+
+def get_password_hash(password):
+    return pwd_context.hash(password)
