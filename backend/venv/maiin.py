@@ -11,10 +11,10 @@ app = FastAPI(
 # This lets the frontend talk to the backend (like a phone line between kitchen and counter)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:3000",
-        "https://compliance-8oodz5kvo-faizkn.vercel.app",
-    ],
+   allow_origins=[
+    "http://localhost:3000",
+    "https://compliance-8oodz5kvo-faizkn.vercel.app",
+],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
