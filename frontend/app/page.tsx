@@ -12,7 +12,7 @@ export default function Home() {
   const [generatedDoc, setGeneratedDoc] = useState<string | null>(null);
 
   useEffect(() => {
-    fetch("http://localhost:8000/api/v1/documents")
+    fetch("https://compliance-ai-2xa8.onrender.com/api/v1/documents")
       .then(res => res.json())
       .then(data => {
         if (data.length > 0) {
@@ -36,7 +36,7 @@ export default function Home() {
     formData.append("file", file);
 
     try {
-      const uploadRes = await fetch("http://localhost:8000/api/v1/documents/upload", {
+      const uploadRes = await fetch("https://compliance-ai-2xa8.onrender.com/api/v1/documents/upload", {
         method: "POST",
         body: formData,
       });
@@ -57,7 +57,7 @@ export default function Home() {
       setAnalysis(null);
       setGeneratedDoc(null);
 
-      const analyzeRes = await fetch(`http://localhost:8000/api/v1/compliance/analyze/${uploadData.id}`, {
+      const analyzeRes = await fetch(`https://compliance-ai-2xa8.onrender.com/api/v1/compliance/analyze/${uploadData.id}`, {
         method: "POST",
       });
       const analyzeData = await analyzeRes.json();
@@ -116,7 +116,7 @@ export default function Home() {
     setIsAnalyzing(true);
     
     try {
-      const res = await fetch(`http://localhost:8000/api/v1/compliance/generate-fix/${selectedDoc}`, {
+      const res = await fetch(`https://compliance-ai-2xa8.onrender.com/api/v1/compliance/generate-fix/${selectedDoc}`, {
         method: "POST",
       });
       const data = await res.json();
