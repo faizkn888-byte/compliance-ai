@@ -1,42 +1,84 @@
 "use client";
-
 import { useState, useCallback, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "./context/AuthContext";
 import { useDropzone } from "react-dropzone";
-import { Upload, FileText, Shield, CheckCircle, AlertTriangle, AlertCircle, Clock, Zap, Loader2, Download, Wand2, LogOut, User } from "lucide-react";
+import { Upload, FileText, Shield, CheckCircle, AlertTriangle, AlertCircle, Clock, Loader2, Download, Wand2, LogOut, User as UserIcon } from "lucide-react";
 import { API_BASE } from "../lib/api";
+
+type DocumentStatus = "processing" | "completed" | "failed";
+
+interface ComplianceDocument {
+  id: string;
+  name: string;
+  type: "privacy_policy" | "data_agreement" | "other";
+  status: DocumentStatus;
+  score?: number;
+  uploadedAt: string;
+}
+
+interface RawDocumentResponse {
+  id: number | string;
+  name: string;
+  status: DocumentStatus;
+  score?: number;
+  uploadedAt?: string;
+}
+
+type Severity = "HIGH" | "MEDIUM" | "LOW";
+
+interface Gap {
+  regulation: string;
+  section: string;
+  severity: Severity;
+  description: string;
+  suggestion: string;
+}
+
+interface BreakdownItem {
+  label: string;
+  score: number;
+  status: "pass" | "warning" | "fail";
+}
+
+interface Analysis {
+  overall_score?: number;
+  score?: number;
+  status?: string;
+  gaps?: Gap[];
+  passed?: string[];
+  breakdown?: BreakdownItem[];
+}
+
+interface UploadResponse {
+  id: string | number;
+  name: string;
+}
+
+interface GenerateFixResponse {
+  fixed_policy: string;
+}
 
 export default function Home() {
   const { user, token, logout, isLoading: authLoading } = useAuth();
   const router = useRouter();
   
-  const [documents, setDocuments] = useState<any[]>([]);
+  const [documents, setDocuments] = useState<ComplianceDocument[]>([]);
+  const [analysis, setAnalysis] = useState<Analysis | null>(null);
   const [selectedDoc, setSelectedDoc] = useState<string | null>(null);
-  const [analysis, setAnalysis] = useState<any>(null);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [generatedDoc, setGeneratedDoc] = useState<string | null>(null);
 
-  useEffect(() => {
-    if (!authLoading && !user) {
-      router.push("/login");
-    }
-  }, [authLoading, user, router]);
+  const fetchDocuments = useCallback(async () => {
+    if (!token) return;
 
-  useEffect(() => {
-    if (token) {
-      fetchDocuments();
-    }
-  }, [token]);
-
-  const fetchDocuments = async () => {
     try {
       const res = await fetch(`${API_BASE}/documents`, {
         headers: { Authorization: `Bearer ${token}` },
       });
       if (res.ok) {
-        const data = await res.json();
-        const formatted = data.map((d: any) => ({
+        const data: RawDocumentResponse[] = await res.json();
+        const formatted: ComplianceDocument[] = data.map((d) => ({
           id: String(d.id),
           name: d.name,
           type: "other",
@@ -52,7 +94,20 @@ export default function Home() {
     } catch (error) {
       console.error("Failed to fetch documents:", error);
     }
-  };
+  }, [selectedDoc, token]);
+
+  useEffect(() => {
+    if (!authLoading && !user) {
+      router.push("/login");
+    }
+  }, [authLoading, user, router]);
+
+  useEffect(() => {
+    if (token) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      fetchDocuments();
+    }
+  }, [fetchDocuments, token]);
 
   const onDrop = useCallback(async (acceptedFiles: File[]) => {
     if (!token) return;
@@ -66,7 +121,7 @@ export default function Home() {
         headers: { Authorization: `Bearer ${token}` },
         body: formData,
       });
-      const uploadData = await uploadRes.json();
+      const uploadData: UploadResponse = await uploadRes.json();
 
       const newDocId = "doc-" + Date.now();
       const newDoc = {
@@ -87,7 +142,7 @@ export default function Home() {
         method: "POST",
         headers: { Authorization: `Bearer ${token}` },
       });
-      const analyzeData = await analyzeRes.json();
+      const analyzeData: Analysis = await analyzeRes.json();
 
       setDocuments((prev) => prev.map((d) => 
         d.id === newDocId 
@@ -117,6 +172,8 @@ export default function Home() {
   });
 
   const selectedDocument = documents.find((d) => String(d.id) === String(selectedDoc));
+  const analysisGaps = analysis?.gaps ?? [];
+  const analysisPassed = analysis?.passed ?? [];
 
   const getStatusIcon = (status: string) => {
     switch (status) {
@@ -135,8 +192,9 @@ export default function Home() {
     return "text-red-600";
   };
 
-  const currentScore = analysis?.overall_score || analysis?.score || selectedDocument?.score || 0;
-  const currentStatus = analysis?.status || (selectedDocument?.score >= 80 ? "Compliant" : selectedDocument?.score >= 60 ? "Needs Improvement" : "Non-Compliant");
+  const selectedScore = selectedDocument?.score ?? 0;
+  const currentScore = analysis?.overall_score ?? analysis?.score ?? selectedScore;
+  const currentStatus = analysis?.status || (selectedScore >= 80 ? "Compliant" : selectedScore >= 60 ? "Needs Improvement" : "Non-Compliant");
 
   const handleGenerateFix = async () => {
     if (!selectedDoc || !token) return;
@@ -147,7 +205,7 @@ export default function Home() {
         method: "POST",
         headers: { Authorization: `Bearer ${token}` },
       });
-      const data = await res.json();
+      const data: GenerateFixResponse = await res.json();
       setGeneratedDoc(data.fixed_policy);
       setIsAnalyzing(false);
     } catch (error) {
@@ -212,7 +270,7 @@ export default function Home() {
           </div>
           <div className="flex items-center gap-4">
             <div className="flex items-center gap-2 text-sm text-gray-600">
-              <User className="h-4 w-4" />
+              <UserIcon className="h-4 w-4" />
               {user.full_name || user.email}
             </div>
             <button 
@@ -252,7 +310,7 @@ export default function Home() {
               <p className="text-sm font-medium text-gray-500">Gaps Found</p>
               <AlertTriangle className="h-4 w-4 text-orange-600" />
             </div>
-            <p className="text-2xl font-bold">{analysis?.gaps?.length || 0}</p>
+            <p className="text-2xl font-bold">{analysisGaps.length}</p>
           </div>
         </div>
 
@@ -358,10 +416,10 @@ export default function Home() {
                     <div>
                       <h3 className="text-lg font-medium text-gray-900">{currentStatus}</h3>
                       <p className="text-sm text-gray-500">
-                        {analysis?.gaps?.length > 0 
-                          ? `${analysis.gaps.length} gaps found` 
-                          : analysis?.passed?.length > 0
-                          ? `${analysis.passed.length} checks passed`
+                        {analysisGaps.length > 0
+                          ? `${analysisGaps.length} gaps found` 
+                          : analysisPassed.length > 0
+                          ? `${analysisPassed.length} checks passed`
                           : "Analysis complete"}
                       </p>
                     </div>
@@ -369,7 +427,7 @@ export default function Home() {
 
                   {analysis?.breakdown && (
                     <div className="space-y-3">
-                      {analysis.breakdown.map((item: any, index: number) => (
+                      {analysis.breakdown.map((item, index) => (
                         <div key={index} className="space-y-1">
                           <div className="flex items-center justify-between text-sm">
                             <span className="flex items-center gap-2">
@@ -393,12 +451,12 @@ export default function Home() {
                   )}
                 </div>
 
-                {analysis?.gaps && analysis.gaps.length > 0 && (
+                {analysisGaps.length > 0 && (
                   <div className="bg-white rounded-lg border shadow-sm p-6">
                     <div className="flex items-center justify-between mb-4">
                       <h2 className="flex items-center gap-2 font-medium text-gray-900">
                         <AlertTriangle className="h-5 w-5 text-orange-600" />
-                        Compliance Gaps ({analysis.gaps.length})
+                        Compliance Gaps ({analysisGaps.length})
                       </h2>
                       <div className="flex gap-2">
                         <button 
@@ -420,7 +478,7 @@ export default function Home() {
                     </div>
                     
                     <div className="space-y-4">
-                      {analysis.gaps.map((gap: any, i: number) => (
+                      {analysisGaps.map((gap, i) => (
                         <div key={i} className="border rounded-lg p-4 space-y-3">
                           <div className="flex items-start gap-3">
                             {gap.severity === "HIGH" ? <AlertCircle className="h-5 w-5 text-red-500 mt-0.5" /> :
@@ -453,14 +511,14 @@ export default function Home() {
                   </div>
                 )}
 
-                {analysis?.passed && analysis.passed.length > 0 && (
+                {analysisPassed.length > 0 && (
                   <div className="bg-white rounded-lg border shadow-sm p-6">
                     <h2 className="flex items-center gap-2 font-medium text-gray-900 mb-4">
                       <CheckCircle className="h-5 w-5 text-green-600" />
-                      Passed Checks ({analysis.passed.length})
+                      Passed Checks ({analysisPassed.length})
                     </h2>
                     <div className="space-y-2">
-                      {analysis.passed.map((item: string, i: number) => (
+                      {analysisPassed.map((item, i) => (
                         <div key={i} className="flex items-center gap-2 text-sm text-green-700 bg-green-50 rounded-md px-3 py-2">
                           <CheckCircle className="h-4 w-4 flex-shrink-0" />
                           {item}

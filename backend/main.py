@@ -1,28 +1,12 @@
 from fastapi import FastAPI, UploadFile, File, Depends, Response, HTTPException, status, Form
 from fastapi.middleware.cors import CORSMiddleware
-
-app = FastAPI(
-    title="Compliance AI API",
-    version="0.4.1",
-    description="AI-powered compliance for Indian businesses"
-)
-
-# CORS MUST BE FIRST - before any routes
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
-# ... rest of imports and code
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from jose import JWTError, jwt
 from datetime import datetime, timedelta
 import shutil
 import os
 import io
+from pathlib import Path
 
 from sqlalchemy.orm import Session
 from PyPDF2 import PdfReader
@@ -52,6 +36,21 @@ CORS_ORIGINS = [
     if origin.strip()
 ] or DEFAULT_CORS_ORIGINS
 
+
+app = FastAPI(
+    title="Compliance AI API",
+    version="0.4.1",
+    description="AI-powered compliance for Indian businesses"
+)
+
+# CORS MUST BE FIRST - before any routes
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=CORS_ORIGINS,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 
 os.makedirs("uploads", exist_ok=True)
@@ -140,7 +139,7 @@ def analyze_text_smart(text: str, regulation_type: str = "dpdp"):
             gaps.append({
                 "regulation": reg["name"],
                 "section": section,
-                "severity": "high" if category in ["Consent", "Breach Notification"] else "medium",
+                "severity": "HIGH" if category in ["Consent", "Breach Notification"] else "MEDIUM",
                 "description": f"Missing or insufficient {category.lower()} clauses. {category} is required under {reg['name']}.",
                 "suggestion": f"Add a dedicated section covering {category.lower()} with specific procedures, timelines, and responsible personnel."
             })
@@ -266,11 +265,12 @@ def generate_pdf_report(document_name: str, analysis: dict, gaps: list) -> bytes
         story.append(Spacer(1, 0.1*inch))
         
         for gap in gaps:
-            severity_color = colors.red if gap["severity"] == "high" else colors.orange if gap["severity"] == "medium" else colors.blue
+            severity = str(gap["severity"]).upper()
+            severity_color = colors.red if severity == "HIGH" else colors.orange if severity == "MEDIUM" else colors.blue
             
             gap_data = [
                 [Paragraph(f"<b>{gap['regulation']} — {gap['section']}</b>", normal_style)],
-                [Paragraph(f"<b>Severity:</b> <font color='{severity_color.hexval()}'>{gap['severity'].upper()}</font>", normal_style)],
+                [Paragraph(f"<b>Severity:</b> <font color='{severity_color.hexval()}'>{severity}</font>", normal_style)],
                 [Paragraph(f"<b>Issue:</b> {gap['description']}", normal_style)],
                 [Paragraph(f"<b>Recommendation:</b> {gap['suggestion']}", normal_style)]
             ]
@@ -373,15 +373,16 @@ async def upload_document(
     current_user: UserDB = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    file_path = f"uploads/{file.filename}"
+    original_name = Path(file.filename or "uploaded-document").name
+    file_path = Path("uploads") / original_name
     with open(file_path, "wb") as buffer:
         shutil.copyfileobj(file.file, buffer)
     
-    text = extract_text(file_path)
+    text = extract_text(str(file_path))
     
     db_doc = DocumentDB(
-        filename=file.filename,
-        original_name=file.filename,
+        filename=original_name,
+        original_name=original_name,
         extracted_text=text[:10000],
         status="pending",
         owner_id=current_user.id
@@ -392,9 +393,10 @@ async def upload_document(
     
     return {
         "id": db_doc.id,
-        "filename": file.filename,
+        "filename": original_name,
+        "name": original_name,
         "status": "pending",
-        "message": f"Saved {file.filename}. Read {len(text)} characters."
+        "message": f"Saved {original_name}. Read {len(text)} characters."
     }
 
 @app.get("/api/v1/documents")
