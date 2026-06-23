@@ -3,9 +3,21 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { Shield, Mail, Lock, User, Building2, Loader2 } from "lucide-react";
+import { API_BASE } from "../../lib/api";
 
-// THIS IS YOUR LIVE BACKEND URL - DO NOT CHANGE
-const API_URL = "https://compliance-ai-2xa8.onrender.com";
+function formatApiError(detail: unknown, fallback: string): string {
+  if (typeof detail === "string") return detail;
+  if (Array.isArray(detail)) {
+    return detail
+      .map((item) =>
+        typeof item === "object" && item !== null && "msg" in item
+          ? String((item as { msg: string }).msg)
+          : String(item)
+      )
+      .join(". ");
+  }
+  return fallback;
+}
 
 export default function SignupPage() {
   const [email, setEmail] = useState("");
@@ -28,20 +40,14 @@ export default function SignupPage() {
       formData.append("full_name", fullName);
       formData.append("company_name", companyName);
 
-      console.log("Sending to:", `${API_URL}/api/v1/auth/register`);
-
-      const res = await fetch(`${API_URL}/api/v1/auth/register`, {
+      const res = await fetch(`${API_BASE}/auth/register`, {
         method: "POST",
         headers: { "Content-Type": "application/x-www-form-urlencoded" },
         body: formData,
       });
 
-      console.log("Response status:", res.status);
-
       const text = await res.text();
-      console.log("Response text:", text);
-
-      let data;
+      let data: { detail?: unknown; access_token?: string };
       try {
         data = JSON.parse(text);
       } catch {
@@ -49,17 +55,23 @@ export default function SignupPage() {
       }
 
       if (!res.ok) {
-        setError(data.detail || `Server error: ${res.status}`);
+        setError(
+          formatApiError(
+            data.detail,
+            res.status === 400
+              ? "Failed to create account. This email may already be registered."
+              : `Failed to create account (${res.status}). Please try again.`
+          )
+        );
         setIsLoading(false);
         return;
       }
 
-      // Auto-login after signup
       const loginForm = new URLSearchParams();
       loginForm.append("username", email);
       loginForm.append("password", password);
 
-      const loginRes = await fetch(`${API_URL}/api/v1/auth/login`, {
+      const loginRes = await fetch(`${API_BASE}/auth/login`, {
         method: "POST",
         headers: { "Content-Type": "application/x-www-form-urlencoded" },
         body: loginForm,
@@ -69,14 +81,14 @@ export default function SignupPage() {
 
       if (loginRes.ok && loginData.access_token) {
         localStorage.setItem("token", loginData.access_token);
-        window.location.href = "/"; // Force redirect
+        window.location.href = "/";
       } else {
         setError("Account created! Please sign in manually.");
         router.push("/login");
       }
     } catch (err) {
       console.error("Signup error:", err);
-      setError("Network error. Check console for details.");
+      setError("Network error. Please try again.");
     }
     setIsLoading(false);
   };
