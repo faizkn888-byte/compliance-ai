@@ -1,5 +1,22 @@
-from fastapi import FastAPI, UploadFile, File, Depends, Response, HTTPException, status, Form
+from fastapi import FastAPI, UploadFile, File, Depends, Response, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
+
+app = FastAPI(
+    title="Compliance AI API",
+    version="0.4.1",
+    description="AI-powered compliance for Indian businesses"
+)
+
+# CORS MUST BE FIRST - before any routes
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# ... rest of imports and code
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from jose import JWTError, jwt
 from datetime import datetime, timedelta
@@ -35,20 +52,7 @@ CORS_ORIGINS = [
     if origin.strip()
 ] or DEFAULT_CORS_ORIGINS
 
-app = FastAPI(
-    title="Compliance AI API",
-    version="0.4.0",
-    description="AI-powered compliance for Indian businesses"
-)
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=CORS_ORIGINS,
-    allow_origin_regex=r"https://.*\.vercel\.app",
-    allow_credentials=False,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
 
 os.makedirs("uploads", exist_ok=True)
 
