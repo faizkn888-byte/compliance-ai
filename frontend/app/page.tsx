@@ -5,8 +5,7 @@ import { useRouter } from "next/navigation";
 import { useAuth } from "./context/AuthContext";
 import { useDropzone } from "react-dropzone";
 import { Upload, FileText, Shield, CheckCircle, AlertTriangle, AlertCircle, Clock, Zap, Loader2, Download, Wand2, LogOut, User } from "lucide-react";
-
-const API_URL = "https://compliance-ai-2xa8.onrender.com";
+import { API_BASE } from "../lib/api";
 
 export default function Home() {
   const { user, token, logout, isLoading: authLoading } = useAuth();
@@ -32,7 +31,7 @@ export default function Home() {
 
   const fetchDocuments = async () => {
     try {
-      const res = await fetch(`${API_URL}/api/v1/documents`, {
+      const res = await fetch(`${API_BASE}/documents`, {
         headers: { Authorization: `Bearer ${token}` },
       });
       if (res.ok) {
@@ -62,7 +61,7 @@ export default function Home() {
     formData.append("file", file);
 
     try {
-      const uploadRes = await fetch(`${API_URL}/api/v1/documents/upload`, {
+      const uploadRes = await fetch(`${API_BASE}/documents/upload`, {
         method: "POST",
         headers: { Authorization: `Bearer ${token}` },
         body: formData,
@@ -84,7 +83,7 @@ export default function Home() {
       setAnalysis(null);
       setGeneratedDoc(null);
 
-      const analyzeRes = await fetch(`${API_URL}/api/v1/compliance/analyze/${uploadData.id}`, {
+      const analyzeRes = await fetch(`${API_BASE}/compliance/analyze/${uploadData.id}`, {
         method: "POST",
         headers: { Authorization: `Bearer ${token}` },
       });
@@ -144,7 +143,7 @@ export default function Home() {
     setIsAnalyzing(true);
     
     try {
-      const res = await fetch(`${API_URL}/api/v1/compliance/generate-fix/${selectedDoc}`, {
+      const res = await fetch(`${API_BASE}/compliance/generate-fix/${selectedDoc}`, {
         method: "POST",
         headers: { Authorization: `Bearer ${token}` },
       });
@@ -157,9 +156,25 @@ export default function Home() {
     }
   };
 
-  const handleDownloadReport = () => {
+  const handleDownloadReport = async () => {
     if (!selectedDoc || !token) return;
-    window.open(`${API_URL}/api/v1/compliance/report/${selectedDoc}`, '_blank');
+    try {
+      const res = await fetch(`${API_BASE}/compliance/report/${selectedDoc}`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!res.ok) return;
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = "compliance-report.pdf";
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    } catch (error) {
+      console.error("Report download failed:", error);
+    }
   };
 
   const handleDownloadFix = () => {

@@ -548,4 +548,4 @@ def download_report(
 
 @app.get("/health")
 def health_check():
-    return {"status": "ok", "version": "0.4.0"}
+    return {"status": "ok", "version": "0.4.1"}  # Bumped version

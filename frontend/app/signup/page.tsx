@@ -4,8 +4,7 @@ import { useState } from "react";
 import { useAuth } from "../context/AuthContext";
 import { useRouter } from "next/navigation";
 import { Shield, Mail, Lock, User, Building2, Loader2 } from "lucide-react";
-
-const API_URL = "https://compliance-ai-2xa8.onrender.com";
+import { API_BASE } from "../../lib/api";
 
 function formatApiError(detail: unknown, fallback: string): string {
   if (typeof detail === "string") return detail;
@@ -43,16 +42,13 @@ export default function SignupPage() {
       formData.append("full_name", fullName);
       formData.append("company_name", companyName);
 
-      console.log("Sending signup request to:", `${API_URL}/api/v1/auth/register`);
-
-      const res = await fetch(`${API_URL}/api/v1/auth/register`, {
+      const res = await fetch(`${API_BASE}/auth/register`, {
         method: "POST",
         headers: { "Content-Type": "application/x-www-form-urlencoded" },
         body: formData,
       });
 
       const data = await res.json();
-      console.log("Signup response:", res.status, data);
 
       if (!res.ok) {
         setError(

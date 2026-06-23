@@ -1,6 +1,7 @@
 "use client";
 
 import { createContext, useContext, useState, useEffect, ReactNode } from "react";
+import { API_BASE } from "../../lib/api";
 
 interface User {
   id: number;
@@ -20,8 +21,6 @@ interface AuthContextType {
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
-const API_URL = "https://compliance-ai-2xa8.onrender.com";
-
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [token, setToken] = useState<string | null>(null);
@@ -39,7 +38,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const fetchUser = async (authToken: string) => {
     try {
-      const res = await fetch(`${API_URL}/api/v1/auth/me`, {
+      const res = await fetch(`${API_BASE}/auth/me`, {
         headers: { Authorization: `Bearer ${authToken}` },
       });
       if (res.ok) {
@@ -62,7 +61,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       formData.append("username", email);
       formData.append("password", password);
 
-      const res = await fetch(`${API_URL}/api/v1/auth/login`, {
+      const res = await fetch(`${API_BASE}/auth/login`, {
         method: "POST",
         headers: { "Content-Type": "application/x-www-form-urlencoded" },
         body: formData,
@@ -89,7 +88,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       formData.append("full_name", fullName);
       formData.append("company_name", companyName);
 
-      const res = await fetch(`${API_URL}/api/v1/auth/register`, {
+      const res = await fetch(`${API_BASE}/auth/register`, {
         method: "POST",
         headers: { "Content-Type": "application/x-www-form-urlencoded" },
         body: formData,
