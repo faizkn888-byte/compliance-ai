@@ -1,4 +1,4 @@
-from fastapi import FastAPI, UploadFile, File, Depends, Response, HTTPException, status
+from fastapi import FastAPI, UploadFile, File, Depends, Response, HTTPException, status, Form
 from fastapi.middleware.cors import CORSMiddleware
 
 app = FastAPI(
