@@ -1,16 +1,28 @@
 "use client";
 
 import { useState } from "react";
-import { useRouter } from "next/navigation";
 import { Shield, Mail, Lock, Loader2 } from "lucide-react";
 import { API_BASE } from "../../lib/api";
+
+function formatApiError(detail: unknown, fallback: string): string {
+  if (typeof detail === "string") return detail;
+  if (Array.isArray(detail)) {
+    return detail
+      .map((item) =>
+        typeof item === "object" && item !== null && "msg" in item
+          ? String((item as { msg: string }).msg)
+          : String(item)
+      )
+      .join(". ");
+  }
+  return fallback;
+}
 
 export default function LoginPage() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [isLoading, setIsLoading] = useState(false);
-  const router = useRouter();
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -29,7 +41,7 @@ export default function LoginPage() {
       });
 
       const text = await res.text();
-      let data;
+      let data: { detail?: unknown; access_token?: string };
       try {
         data = JSON.parse(text);
       } catch {
@@ -37,7 +49,7 @@ export default function LoginPage() {
       }
 
       if (!res.ok) {
-        setError(data.detail || "Invalid email or password");
+        setError(formatApiError(data.detail, "Invalid email or password"));
         setIsLoading(false);
         return;
       }
@@ -112,7 +124,7 @@ export default function LoginPage() {
           </form>
 
           <div className="mt-4 text-center text-sm text-gray-500">
-            Don't have an account?{" "}
+            Don&apos;t have an account?{" "}
             <a href="/signup" className="text-blue-600 hover:underline">
               Sign up
             </a>
