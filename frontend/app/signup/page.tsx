@@ -1,24 +1,11 @@
 "use client";
 
 import { useState } from "react";
-import { useAuth } from "../context/AuthContext";
 import { useRouter } from "next/navigation";
 import { Shield, Mail, Lock, User, Building2, Loader2 } from "lucide-react";
-import { API_BASE } from "../../lib/api";
 
-function formatApiError(detail: unknown, fallback: string): string {
-  if (typeof detail === "string") return detail;
-  if (Array.isArray(detail)) {
-    return detail
-      .map((item) =>
-        typeof item === "object" && item !== null && "msg" in item
-          ? String((item as { msg: string }).msg)
-          : String(item)
-      )
-      .join(". ");
-  }
-  return fallback;
-}
+// THIS IS YOUR LIVE BACKEND URL - DO NOT CHANGE
+const API_URL = "https://compliance-ai-2xa8.onrender.com";
 
 export default function SignupPage() {
   const [email, setEmail] = useState("");
@@ -27,7 +14,6 @@ export default function SignupPage() {
   const [companyName, setCompanyName] = useState("");
   const [error, setError] = useState("");
   const [isLoading, setIsLoading] = useState(false);
-  const { login } = useAuth();
   const router = useRouter();
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -42,31 +28,48 @@ export default function SignupPage() {
       formData.append("full_name", fullName);
       formData.append("company_name", companyName);
 
-      const res = await fetch(`${API_BASE}/auth/register`, {
+      console.log("Sending to:", `${API_URL}/api/v1/auth/register`);
+
+      const res = await fetch(`${API_URL}/api/v1/auth/register`, {
         method: "POST",
         headers: { "Content-Type": "application/x-www-form-urlencoded" },
         body: formData,
       });
 
-      const data = await res.json();
+      console.log("Response status:", res.status);
+
+      const text = await res.text();
+      console.log("Response text:", text);
+
+      let data;
+      try {
+        data = JSON.parse(text);
+      } catch {
+        data = { detail: text };
+      }
 
       if (!res.ok) {
-        setError(
-          formatApiError(
-            data.detail,
-            res.status === 400
-              ? "Failed to create account. This email may already be registered."
-              : `Failed to create account (${res.status}). Please try again.`
-          )
-        );
+        setError(data.detail || `Server error: ${res.status}`);
         setIsLoading(false);
         return;
       }
 
       // Auto-login after signup
-      const loginSuccess = await login(email, password);
-      if (loginSuccess) {
-        router.push("/");
+      const loginForm = new URLSearchParams();
+      loginForm.append("username", email);
+      loginForm.append("password", password);
+
+      const loginRes = await fetch(`${API_URL}/api/v1/auth/login`, {
+        method: "POST",
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        body: loginForm,
+      });
+
+      const loginData = await loginRes.json();
+
+      if (loginRes.ok && loginData.access_token) {
+        localStorage.setItem("token", loginData.access_token);
+        window.location.href = "/"; // Force redirect
       } else {
         setError("Account created! Please sign in manually.");
         router.push("/login");

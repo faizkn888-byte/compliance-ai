@@ -1,16 +1,16 @@
 "use client";
 
 import { useState } from "react";
-import { useAuth } from "../context/AuthContext";
 import { useRouter } from "next/navigation";
 import { Shield, Mail, Lock, Loader2 } from "lucide-react";
+
+const API_URL = "https://compliance-ai-2xa8.onrender.com";
 
 export default function LoginPage() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [isLoading, setIsLoading] = useState(false);
-  const { login } = useAuth();
   const router = useRouter();
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -18,11 +18,40 @@ export default function LoginPage() {
     setError("");
     setIsLoading(true);
 
-    const success = await login(email, password);
-    if (success) {
-      router.push("/");
-    } else {
-      setError("Invalid email or password");
+    try {
+      const formData = new URLSearchParams();
+      formData.append("username", email);
+      formData.append("password", password);
+
+      const res = await fetch(`${API_URL}/api/v1/auth/login`, {
+        method: "POST",
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        body: formData,
+      });
+
+      const text = await res.text();
+      let data;
+      try {
+        data = JSON.parse(text);
+      } catch {
+        data = { detail: text };
+      }
+
+      if (!res.ok) {
+        setError(data.detail || "Invalid email or password");
+        setIsLoading(false);
+        return;
+      }
+
+      if (data.access_token) {
+        localStorage.setItem("token", data.access_token);
+        window.location.href = "/";
+      } else {
+        setError("Login failed. No token received.");
+      }
+    } catch (err) {
+      console.error("Login error:", err);
+      setError("Network error. Check console.");
     }
     setIsLoading(false);
   };
