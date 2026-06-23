@@ -53,10 +53,22 @@ interface Analysis {
 interface UploadResponse {
   id: string | number;
   name: string;
+  regulation?: string;
 }
 
 interface GenerateFixResponse {
   fixed_policy: string;
+}
+
+interface Regulation {
+  id: string;
+  name: string;
+  region: string;
+  checks_count: number;
+}
+
+interface RegulationsResponse {
+  regulations?: Regulation[];
 }
 
 export default function Home() {
@@ -68,6 +80,8 @@ export default function Home() {
   const [selectedDoc, setSelectedDoc] = useState<string | null>(null);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [generatedDoc, setGeneratedDoc] = useState<string | null>(null);
+  const [selectedRegulation, setSelectedRegulation] = useState("dpdp");
+  const [regulations, setRegulations] = useState<Regulation[]>([]);
 
   const fetchDocuments = useCallback(async () => {
     if (!token) return;
@@ -96,6 +110,17 @@ export default function Home() {
     }
   }, [selectedDoc, token]);
 
+  const fetchRegulations = useCallback(async () => {
+    try {
+      const res = await fetch(`${API_BASE}/regulations`);
+      if (!res.ok) return;
+      const data: RegulationsResponse = await res.json();
+      setRegulations(data.regulations ?? []);
+    } catch (error) {
+      console.error("Failed to fetch regulations:", error);
+    }
+  }, []);
+
   useEffect(() => {
     if (!authLoading && !user) {
       router.push("/login");
@@ -109,6 +134,13 @@ export default function Home() {
     }
   }, [fetchDocuments, token]);
 
+  useEffect(() => {
+    if (token) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      fetchRegulations();
+    }
+  }, [fetchRegulations, token]);
+
   const onDrop = useCallback(async (acceptedFiles: File[]) => {
     if (!token) return;
     const file = acceptedFiles[0];
@@ -116,11 +148,14 @@ export default function Home() {
     formData.append("file", file);
 
     try {
-      const uploadRes = await fetch(`${API_BASE}/documents/upload`, {
-        method: "POST",
-        headers: { Authorization: `Bearer ${token}` },
-        body: formData,
-      });
+      const uploadRes = await fetch(
+        `${API_BASE}/documents/upload?regulation=${encodeURIComponent(selectedRegulation)}`,
+        {
+          method: "POST",
+          headers: { Authorization: `Bearer ${token}` },
+          body: formData,
+        }
+      );
       const uploadData: UploadResponse = await uploadRes.json();
 
       const newDocId = "doc-" + Date.now();
@@ -138,10 +173,13 @@ export default function Home() {
       setAnalysis(null);
       setGeneratedDoc(null);
 
-      const analyzeRes = await fetch(`${API_BASE}/compliance/analyze/${uploadData.id}`, {
-        method: "POST",
-        headers: { Authorization: `Bearer ${token}` },
-      });
+      const analyzeRes = await fetch(
+        `${API_BASE}/compliance/analyze/${uploadData.id}?regulation=${encodeURIComponent(selectedRegulation)}`,
+        {
+          method: "POST",
+          headers: { Authorization: `Bearer ${token}` },
+        }
+      );
       const analyzeData: Analysis = await analyzeRes.json();
 
       setDocuments((prev) => prev.map((d) => 
@@ -159,7 +197,7 @@ export default function Home() {
       setIsAnalyzing(false);
       alert("Upload failed.");
     }
-  }, [token]);
+  }, [selectedRegulation, token]);
 
   const { getRootProps, getInputProps, isDragActive } = useDropzone({
     onDrop,
@@ -172,6 +210,7 @@ export default function Home() {
   });
 
   const selectedDocument = documents.find((d) => String(d.id) === String(selectedDoc));
+  const selectedRegulationDetails = regulations.find((regulation) => regulation.id === selectedRegulation);
   const analysisGaps = analysis?.gaps ?? [];
   const analysisPassed = analysis?.passed ?? [];
 
@@ -318,6 +357,28 @@ export default function Home() {
           {/* Left Column */}
           <div className="lg:col-span-1 space-y-6">
             <div className="bg-white rounded-lg border shadow-sm p-6">
+              <div className="mb-4">
+                <label htmlFor="regulation" className="block text-sm font-medium text-gray-700 mb-1">
+                  Regulation
+                </label>
+                <select
+                  id="regulation"
+                  value={selectedRegulation}
+                  onChange={(event) => setSelectedRegulation(event.target.value)}
+                  className="w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                >
+                  {regulations.length === 0 ? (
+                    <option value="dpdp">DPDP Act 2023</option>
+                  ) : (
+                    regulations.map((regulation) => (
+                      <option key={regulation.id} value={regulation.id}>
+                        {regulation.name} - {regulation.region} ({regulation.checks_count} checks)
+                      </option>
+                    ))
+                  )}
+                </select>
+              </div>
+
               <div
                 {...getRootProps()}
                 className={`border-2 border-dashed rounded-lg p-8 text-center cursor-pointer transition-colors ${
@@ -388,7 +449,9 @@ export default function Home() {
               <div className="bg-white rounded-lg border shadow-sm p-12 flex flex-col items-center justify-center">
                 <Loader2 className="h-12 w-12 text-blue-600 animate-spin mb-4" />
                 <h3 className="text-lg font-medium text-gray-900 mb-1">Analyzing your document...</h3>
-                <p className="text-sm text-gray-500">Checking DPDP Act 2023 compliance</p>
+                <p className="text-sm text-gray-500">
+                  Checking {selectedRegulationDetails?.name ?? "selected regulation"} compliance
+                </p>
               </div>
             ) : selectedDocument ? (
               <>

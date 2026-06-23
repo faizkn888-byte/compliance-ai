@@ -89,6 +89,7 @@ def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(
 REGULATIONS = {
     "dpdp": {
         "name": "DPDP Act 2023",
+        "region": "India",
         "checks": [
             ("Consent", ["consent", "agree", "opt-in", "permission", "authorize"], "Section 5", "Up to ₹250 crore"),
             ("Notice", ["notice", "inform", "purpose", "collection"], "Section 8", "Up to ₹200 crore"),
@@ -97,6 +98,61 @@ REGULATIONS = {
             ("Data Principal Rights", ["access", "correction", "erasure", "delete", "grievance", "rights"], "Section 11", "Up to ₹150 crore"),
             ("Grievance Officer", ["grievance officer", "complaint", "redressal", "contact"], "Section 12", "Up to ₹100 crore"),
             ("Cross-border Transfer", ["cross-border", "foreign", "transfer outside india", "adequate protection"], "Section 16", "Up to ₹250 crore"),
+        ]
+    },
+    "rbi_cyber": {
+        "name": "RBI Cyber Security Framework",
+        "region": "India",
+        "checks": [
+            ("Cyber Security Policy", ["cyber security policy", "information security", "infosec"], "Framework 1.1", "Up to â‚¹5 crore"),
+            ("Incident Response", ["incident response", "cyber incident", "security incident"], "Framework 3.1", "Up to â‚¹2 crore"),
+            ("IT Governance", ["it governance", "board oversight", "risk management"], "Framework 2.1", "Up to â‚¹3 crore"),
+            ("Data Localization", ["data localization", "data within india", "domestic storage"], "Framework 5.2", "Up to â‚¹5 crore"),
+            ("Access Control", ["access control", "privileged access", "user authentication"], "Framework 4.1", "Up to â‚¹2 crore"),
+        ]
+    },
+    "cert_in": {
+        "name": "CERT-In Directions",
+        "region": "India",
+        "checks": [
+            ("Incident Reporting", ["cert-in", "report incident", "incident reporting"], "Direction 1", "Up to â‚¹1 lakh per incident"),
+            ("Log Retention", ["log retention", "preserve logs", "180 days"], "Direction 2", "Up to â‚¹1 lakh"),
+            ("Data Breach Timeline", ["6 hours", "report within 6 hours"], "Direction 3", "Up to â‚¹1 lakh"),
+            ("KYC Data Protection", ["kyc", "customer data protection"], "Direction 4", "Up to â‚¹5 lakh"),
+        ]
+    },
+    "gdpr": {
+        "name": "GDPR (EU)",
+        "region": "Europe",
+        "checks": [
+            ("Lawful Basis", ["lawful basis", "legal basis", "legitimate interest", "contractual necessity"], "Article 6", "Up to â‚¬20M or 4% global turnover"),
+            ("Consent Requirements", ["explicit consent", "withdraw consent", "freely given"], "Article 7", "Up to â‚¬20M or 4% global turnover"),
+            ("Data Subject Rights", ["right to access", "right to erasure", "right to portability", "data portability"], "Articles 15-22", "Up to â‚¬20M or 4% global turnover"),
+            ("Privacy by Design", ["privacy by design", "data protection by design", "default privacy"], "Article 25", "Up to â‚¬10M or 2% global turnover"),
+            ("Breach Notification", ["72 hours", "supervisory authority", "data protection authority"], "Article 33", "Up to â‚¬10M or 2% global turnover"),
+            ("DPO Requirement", ["data protection officer", "dpo"], "Article 37", "Up to â‚¬10M or 2% global turnover"),
+            ("Cross-border Transfers", ["adequacy decision", "standard contractual clauses", "scc", "binding corporate rules"], "Chapter V", "Up to â‚¬20M or 4% global turnover"),
+        ]
+    },
+    "ccpa": {
+        "name": "CCPA/CPRA (California)",
+        "region": "United States",
+        "checks": [
+            ("Consumer Rights", ["consumer rights", "right to know", "right to delete", "right to opt-out"], "Section 1798.100", "Up to $7,500 per violation"),
+            ("Privacy Notice", ["privacy notice", "notice at collection", "categories of personal information"], "Section 1798.130", "Up to $2,500 per violation"),
+            ("Opt-Out Rights", ["opt-out", "do not sell", "do not share", "sale of personal information"], "Section 1798.120", "Up to $7,500 per violation"),
+            ("Service Provider Contracts", ["service provider", "contractor", "third party"], "Section 1798.140", "Up to $2,500 per violation"),
+            ("Data Security", ["reasonable security", "security measures", "safeguards"], "Civil Code 1798.81.5", "Up to $7,500 per violation"),
+        ]
+    },
+    "hipaa": {
+        "name": "HIPAA (US Healthcare)",
+        "region": "United States",
+        "checks": [
+            ("Privacy Rule", ["phi", "protected health information", "minimum necessary"], "45 CFR 164", "Up to $1.5M per violation"),
+            ("Security Rule", ["administrative safeguards", "technical safeguards", "physical safeguards"], "45 CFR 164.308", "Up to $1.5M per violation"),
+            ("Breach Notification", ["breach notification", "60 days", "hhs"], "45 CFR 164.404", "Up to $1.5M per violation"),
+            ("Business Associate Agreements", ["business associate", "baa", "covered entity"], "45 CFR 164.504", "Up to $1.5M per violation"),
         ]
     }
 }
@@ -370,6 +426,7 @@ def get_me(current_user: UserDB = Depends(get_current_user)):
 @app.post("/api/v1/documents/upload")
 async def upload_document(
     file: UploadFile = File(...), 
+    regulation: str = "dpdp",
     current_user: UserDB = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
@@ -396,7 +453,8 @@ async def upload_document(
         "filename": original_name,
         "name": original_name,
         "status": "pending",
-        "message": f"Saved {original_name}. Read {len(text)} characters."
+        "message": f"Saved {original_name}. Read {len(text)} characters.",
+        "regulation": regulation
     }
 
 @app.get("/api/v1/documents")
@@ -555,3 +613,17 @@ def download_report(
 @app.get("/health")
 def health_check():
     return {"status": "ok", "version": "0.4.1"}  # Bumped version
+
+@app.get("/api/v1/regulations")
+def list_regulations():
+    return {
+        "regulations": [
+            {
+                "id": key,
+                "name": value["name"],
+                "region": value["region"],
+                "checks_count": len(value["checks"])
+            }
+            for key, value in REGULATIONS.items()
+        ]
+    }
