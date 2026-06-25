@@ -3,7 +3,11 @@ import { useState, useCallback, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "./context/AuthContext";
 import { useDropzone } from "react-dropzone";
-import { Upload, FileText, Shield, CheckCircle, AlertTriangle, AlertCircle, Clock, Loader2, Download, Wand2, LogOut, User as UserIcon } from "lucide-react";
+import {
+  Upload, FileText, Shield, CheckCircle, AlertTriangle, AlertCircle, Clock, Loader2,
+  Download, Wand2, LogOut, User as UserIcon, Code, Database, Server, Terminal,
+  BookOpen, RefreshCw, ChevronDown, ChevronUp, X, Lock, Globe, Copy, Check
+} from "lucide-react";
 import { API_BASE } from "../lib/api";
 
 type DocumentStatus = "processing" | "completed" | "failed";
@@ -48,6 +52,8 @@ interface Analysis {
   gaps?: Gap[];
   passed?: string[];
   breakdown?: BreakdownItem[];
+  tech_stack?: TechStackItem[];
+  dark_patterns?: DarkPattern[];
 }
 
 interface UploadResponse {
@@ -71,10 +77,50 @@ interface RegulationsResponse {
   regulations?: Regulation[];
 }
 
+interface TechStackItem {
+  id: string; name: string; category: string; confidence: number;
+  matched_keywords: string[]; data_types: string[];
+  third_party: boolean; cross_border: boolean;
+}
+
+interface DarkPattern {
+  pattern: string; severity: string; regulation: string; fix: string;
+}
+
+interface ConsentSpec {
+  regulation: string; regulation_name: string; consent_model: string;
+  banner_html: string; checkbox_html: string; js_implementation: string;
+  purposes: Array<{id: string; label: string; description: string; third_party: string; cross_border: boolean; default_checked: boolean; required: boolean}>;
+  consent_required_tech: Array<{name: string; reason: string}>;
+  consent_not_required_tech: Array<{name: string; reason: string}>;
+  dark_pattern_violations: string[]; must_implement: string[];
+}
+
+interface RetentionSchedule {
+  data_type: string; contains_pii: boolean; pii_types: string[];
+  legal_basis: string; max_retention: number | string;
+  justification: string; implementation: Record<string, string>;
+  anonymization_required: boolean; anonymization_method: string;
+}
+
+interface RetentionPolicy {
+  regulation: string; regulation_name: string; generated_at: string;
+  schedules: RetentionSchedule[];
+  summary: { total_schedules: number; pii_schedules: number; require_anonymization: number; cloud_providers_detected: string[] };
+}
+
+interface ImplementationGuide {
+  document_id: number; regulation: string; generated_at: string;
+  tech_stack: TechStackItem[]; consent_spec: ConsentSpec;
+  retention_policy: RetentionPolicy; privacy_policy: string;
+  dark_patterns: DarkPattern[];
+  summary: { technologies_detected: number; third_party_services: number; cross_border_services: number; consent_required_count: number };
+}
+
 export default function Home() {
   const { user, token, logout, isLoading: authLoading } = useAuth();
   const router = useRouter();
-  
+
   const [documents, setDocuments] = useState<ComplianceDocument[]>([]);
   const [analysis, setAnalysis] = useState<Analysis | null>(null);
   const [selectedDoc, setSelectedDoc] = useState<string | null>(null);
@@ -83,9 +129,19 @@ export default function Home() {
   const [selectedRegulation, setSelectedRegulation] = useState("dpdp");
   const [regulations, setRegulations] = useState<Regulation[]>([]);
 
+  // Implementation guide state
+  const [implementationGuide, setImplementationGuide] = useState<ImplementationGuide | null>(null);
+  const [isLoadingImplementation, setIsLoadingImplementation] = useState(false);
+  const [activeImplementationTab, setActiveImplementationTab] = useState<"consent" | "retention" | "policy" | "dark_patterns">("consent");
+  const [copiedCode, setCopiedCode] = useState<string | null>(null);
+  const [expandedRetention, setExpandedRetention] = useState<string | null>(null);
+  const [showBusinessForm, setShowBusinessForm] = useState(false);
+  const [businessInfo, setBusinessInfo] = useState({
+    company_name: "", website_url: "", contact_email: "", company_address: "",
+  });
+
   const fetchDocuments = useCallback(async () => {
     if (!token) return;
-
     try {
       const res = await fetch(`${API_BASE}/documents`, {
         headers: { Authorization: `Bearer ${token}` },
@@ -129,14 +185,12 @@ export default function Home() {
 
   useEffect(() => {
     if (token) {
-      // eslint-disable-next-line react-hooks/set-state-in-effect
       fetchDocuments();
     }
   }, [fetchDocuments, token]);
 
   useEffect(() => {
     if (token) {
-      // eslint-disable-next-line react-hooks/set-state-in-effect
       fetchRegulations();
     }
   }, [fetchRegulations, token]);
@@ -166,12 +220,13 @@ export default function Home() {
         status: "processing" as const,
         uploadedAt: new Date().toISOString().split("T")[0],
       };
-      
+
       setDocuments((prev) => [newDoc, ...prev]);
       setSelectedDoc(newDocId);
       setIsAnalyzing(true);
       setAnalysis(null);
       setGeneratedDoc(null);
+      setImplementationGuide(null);
 
       const analyzeRes = await fetch(
         `${API_BASE}/compliance/analyze/${uploadData.id}?regulation=${encodeURIComponent(selectedRegulation)}`,
@@ -182,8 +237,8 @@ export default function Home() {
       );
       const analyzeData: Analysis = await analyzeRes.json();
 
-      setDocuments((prev) => prev.map((d) => 
-        d.id === newDocId 
+      setDocuments((prev) => prev.map((d) =>
+        d.id === newDocId
           ? { ...d, id: String(uploadData.id), status: "completed" as const, score: analyzeData.score || analyzeData.overall_score || 72 }
           : d
       ));
@@ -213,6 +268,8 @@ export default function Home() {
   const selectedRegulationDetails = regulations.find((regulation) => regulation.id === selectedRegulation);
   const analysisGaps = analysis?.gaps ?? [];
   const analysisPassed = analysis?.passed ?? [];
+  const techStack = analysis?.tech_stack ?? implementationGuide?.tech_stack ?? [];
+  const darkPatterns = analysis?.dark_patterns ?? implementationGuide?.dark_patterns ?? [];
 
   const getStatusIcon = (status: string) => {
     switch (status) {
@@ -238,7 +295,6 @@ export default function Home() {
   const handleGenerateFix = async () => {
     if (!selectedDoc || !token) return;
     setIsAnalyzing(true);
-    
     try {
       const res = await fetch(`${API_BASE}/compliance/generate-fix/${selectedDoc}`, {
         method: "POST",
@@ -287,6 +343,46 @@ export default function Home() {
     URL.revokeObjectURL(url);
   };
 
+  const fetchImplementationGuide = useCallback(async () => {
+    if (!selectedDoc || !token) return;
+    setIsLoadingImplementation(true);
+    try {
+      const formData = new URLSearchParams();
+      formData.append("company_name", businessInfo.company_name || "[Your Company]");
+      formData.append("website_url", businessInfo.website_url || "[your-website.com]");
+      formData.append("contact_email", businessInfo.contact_email || "[privacy@company.com]");
+      formData.append("company_address", businessInfo.company_address || "[Your Address]");
+      const res = await fetch(
+        `${API_BASE}/compliance/full-implementation/${selectedDoc}?regulation=${encodeURIComponent(selectedRegulation)}`,
+        {
+          method: "POST",
+          headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/x-www-form-urlencoded" },
+          body: formData.toString(),
+        }
+      );
+      if (!res.ok) throw new Error("Failed to fetch implementation guide");
+      const data: ImplementationGuide = await res.json();
+      setImplementationGuide(data);
+      setShowBusinessForm(false);
+    } catch (error) { console.error("Implementation guide failed:", error); }
+    finally { setIsLoadingImplementation(false); }
+  }, [selectedDoc, token, selectedRegulation, businessInfo]);
+
+  const copyToClipboard = (text: string, label: string) => {
+    navigator.clipboard.writeText(text);
+    setCopiedCode(label);
+    setTimeout(() => setCopiedCode(null), 2000);
+  };
+
+  const handleDownloadPolicy = () => {
+    if (!implementationGuide?.privacy_policy) return;
+    const blob = new Blob([implementationGuide.privacy_policy], { type: "text/plain" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url; a.download = `privacy-policy-${selectedRegulation}.md`;
+    document.body.appendChild(a); a.click(); document.body.removeChild(a); URL.revokeObjectURL(url);
+  };
+
   if (authLoading) {
     return (
       <div className="min-h-screen flex items-center justify-center">
@@ -312,7 +408,7 @@ export default function Home() {
               <UserIcon className="h-4 w-4" />
               {user.full_name || user.email}
             </div>
-            <button 
+            <button
               onClick={logout}
               className="text-sm text-gray-600 hover:text-red-600 flex items-center gap-1"
             >
@@ -325,7 +421,7 @@ export default function Home() {
 
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
         {/* Stats */}
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
+        <div className="grid grid-cols-1 md:grid-cols-4 gap-6 mb-8">
           <div className="bg-white rounded-lg border shadow-sm p-6">
             <div className="flex items-center justify-between mb-2">
               <p className="text-sm font-medium text-gray-500">Documents Analyzed</p>
@@ -339,8 +435,8 @@ export default function Home() {
               <Shield className="h-4 w-4 text-green-600" />
             </div>
             <p className="text-2xl font-bold">
-              {documents.length > 0 
-                ? Math.round(documents.reduce((a, d) => a + (d.score || 0), 0) / documents.length) 
+              {documents.length > 0
+                ? Math.round(documents.reduce((a, d) => a + (d.score || 0), 0) / documents.length)
                 : 0}%
             </p>
           </div>
@@ -350,6 +446,13 @@ export default function Home() {
               <AlertTriangle className="h-4 w-4 text-orange-600" />
             </div>
             <p className="text-2xl font-bold">{analysisGaps.length}</p>
+          </div>
+          <div className="bg-white rounded-lg border shadow-sm p-6">
+            <div className="flex items-center justify-between mb-2">
+              <p className="text-sm font-medium text-gray-500">Tech Stack Detected</p>
+              <Server className="h-4 w-4 text-purple-600" />
+            </div>
+            <p className="text-2xl font-bold">{techStack.length}</p>
           </div>
         </div>
 
@@ -364,7 +467,10 @@ export default function Home() {
                 <select
                   id="regulation"
                   value={selectedRegulation}
-                  onChange={(event) => setSelectedRegulation(event.target.value)}
+                  onChange={(e) => {
+                    setSelectedRegulation(e.target.value);
+                    setImplementationGuide(null);
+                  }}
                   className="w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500"
                 >
                   {regulations.length === 0 ? (
@@ -415,6 +521,7 @@ export default function Home() {
                       setSelectedDoc(doc.id);
                       setAnalysis(null);
                       setGeneratedDoc(null);
+                      setImplementationGuide(null);
                     }}
                     className={`w-full flex items-center gap-3 p-4 text-left transition-colors ${
                       String(selectedDoc) === String(doc.id) ? "bg-blue-50" : "hover:bg-gray-50"
@@ -441,6 +548,51 @@ export default function Home() {
                 ))}
               </div>
             </div>
+
+            {/* Tech Stack Card */}
+            {techStack.length > 0 && (
+              <div className="bg-white rounded-lg border shadow-sm p-6">
+                <div className="flex items-center gap-2 mb-4">
+                  <Server className="h-5 w-5 text-purple-600" />
+                  <h3 className="font-medium text-gray-900">Detected Tech Stack</h3>
+                </div>
+                <div className="space-y-2">
+                  {techStack.slice(0, 6).map((tech, i) => (
+                    <div key={i} className="flex items-center justify-between p-2 bg-gray-50 rounded-md">
+                      <div className="flex items-center gap-2">
+                        <div className={`w-2 h-2 rounded-full ${tech.third_party ? 'bg-orange-400' : 'bg-green-400'}`} />
+                        <span className="text-sm font-medium text-gray-700">{tech.name}</span>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        {tech.cross_border && <span className="text-xs bg-red-100 text-red-700 px-1.5 py-0.5 rounded">Cross-border</span>}
+                        <span className="text-xs text-gray-500">{tech.confidence.toFixed(0)}%</span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+                {techStack.length > 6 && <p className="text-xs text-gray-500 mt-2 text-center">+{techStack.length - 6} more detected</p>}
+              </div>
+            )}
+
+            {/* Dark Patterns Alert */}
+            {darkPatterns.length > 0 && (
+              <div className="bg-white rounded-lg border border-red-200 shadow-sm p-6">
+                <div className="flex items-center gap-2 mb-4">
+                  <AlertCircle className="h-5 w-5 text-red-600" />
+                  <h3 className="font-medium text-gray-900">Dark Pattern Alerts</h3>
+                </div>
+                <div className="space-y-2">
+                  {darkPatterns.slice(0, 3).map((dp, i) => (
+                    <div key={i} className="p-2 bg-red-50 rounded-md border border-red-100">
+                      <div className="flex items-center gap-2">
+                        <span className={`text-xs font-bold px-1.5 py-0.5 rounded ${dp.severity === 'HIGH' ? 'bg-red-200 text-red-800' : 'bg-yellow-200 text-yellow-800'}`}>{dp.severity}</span>
+                        <span className="text-sm text-gray-800">{dp.pattern}</span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
           </div>
 
           {/* Right Column */}
@@ -460,7 +612,7 @@ export default function Home() {
                     <Shield className="h-5 w-5 text-blue-600" />
                     Compliance Score
                   </h2>
-                  
+
                   <div className="flex items-center gap-6 mb-8">
                     <div className="relative w-24 h-24">
                       <svg className="w-24 h-24 transform -rotate-90">
@@ -480,7 +632,7 @@ export default function Home() {
                       <h3 className="text-lg font-medium text-gray-900">{currentStatus}</h3>
                       <p className="text-sm text-gray-500">
                         {analysisGaps.length > 0
-                          ? `${analysisGaps.length} gaps found` 
+                          ? `${analysisGaps.length} gaps found`
                           : analysisPassed.length > 0
                           ? `${analysisPassed.length} checks passed`
                           : "Analysis complete"}
@@ -514,6 +666,314 @@ export default function Home() {
                   )}
                 </div>
 
+                {/* Implementation Guide Panel */}
+                {analysis && (
+                  <div className="bg-white rounded-lg border shadow-sm overflow-hidden">
+                    {/* Header */}
+                    <div className="p-6 border-b bg-gradient-to-r from-blue-50 to-purple-50">
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-3">
+                          <div className="p-2 bg-blue-100 rounded-lg">
+                            <Wand2 className="h-5 w-5 text-blue-700" />
+                          </div>
+                          <div>
+                            <h2 className="text-lg font-semibold text-gray-900">Actionable Implementation Guide</h2>
+                            <p className="text-sm text-gray-600">
+                              Exact code, retention schedules, and boilerplate for your {selectedRegulation.toUpperCase()} compliance
+                            </p>
+                          </div>
+                        </div>
+                        <button
+                          onClick={() => {
+                            if (!showBusinessForm && !implementationGuide) { setShowBusinessForm(true); }
+                            else if (implementationGuide) { setImplementationGuide(null); setShowBusinessForm(true); }
+                            else { fetchImplementationGuide(); }
+                          }}
+                          disabled={isLoadingImplementation}
+                          className="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 flex items-center gap-2 disabled:opacity-50 text-sm font-medium"
+                        >
+                          {isLoadingImplementation ? (
+                            <Loader2 className="h-4 w-4 animate-spin" />
+                          ) : implementationGuide ? (
+                            <><RefreshCw className="h-4 w-4" /> Regenerate</>
+                          ) : (
+                            <><Wand2 className="h-4 w-4" /> Generate Guide</>
+                          )}
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* Business Info Form */}
+                    {showBusinessForm && !implementationGuide && (
+                      <div className="p-6 border-b bg-gray-50">
+                        <h3 className="text-sm font-semibold text-gray-700 mb-4">Business Information (for tailored policy)</h3>
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                          <div>
+                            <label className="block text-xs font-medium text-gray-600 mb-1">Company Name</label>
+                            <input type="text" value={businessInfo.company_name}
+                              onChange={(e) => setBusinessInfo({...businessInfo, company_name: e.target.value})}
+                              placeholder="Acme Inc." className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500" />
+                          </div>
+                          <div>
+                            <label className="block text-xs font-medium text-gray-600 mb-1">Website URL</label>
+                            <input type="text" value={businessInfo.website_url}
+                              onChange={(e) => setBusinessInfo({...businessInfo, website_url: e.target.value})}
+                              placeholder="acme.com" className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500" />
+                          </div>
+                          <div>
+                            <label className="block text-xs font-medium text-gray-600 mb-1">Privacy Email</label>
+                            <input type="email" value={businessInfo.contact_email}
+                              onChange={(e) => setBusinessInfo({...businessInfo, contact_email: e.target.value})}
+                              placeholder="privacy@acme.com" className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500" />
+                          </div>
+                          <div>
+                            <label className="block text-xs font-medium text-gray-600 mb-1">Company Address</label>
+                            <input type="text" value={businessInfo.company_address}
+                              onChange={(e) => setBusinessInfo({...businessInfo, company_address: e.target.value})}
+                              placeholder="Mumbai, India" className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500" />
+                          </div>
+                        </div>
+                        <button onClick={fetchImplementationGuide} disabled={isLoadingImplementation}
+                          className="mt-4 bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 text-sm font-medium disabled:opacity-50">
+                          {isLoadingImplementation ? "Generating..." : "Generate Implementation Guide"}
+                        </button>
+                      </div>
+                    )}
+
+                    {/* Implementation Content */}
+                    {implementationGuide && (
+                      <div>
+                        {/* Summary Bar */}
+                        <div className="p-4 bg-gray-50 border-b grid grid-cols-2 md:grid-cols-4 gap-4">
+                          <div className="text-center">
+                            <p className="text-2xl font-bold text-purple-600">{implementationGuide.summary.technologies_detected}</p>
+                            <p className="text-xs text-gray-500">Technologies</p>
+                          </div>
+                          <div className="text-center">
+                            <p className="text-2xl font-bold text-orange-600">{implementationGuide.summary.third_party_services}</p>
+                            <p className="text-xs text-gray-500">Third-Party</p>
+                          </div>
+                          <div className="text-center">
+                            <p className="text-2xl font-bold text-red-600">{implementationGuide.summary.cross_border_services}</p>
+                            <p className="text-xs text-gray-500">Cross-Border</p>
+                          </div>
+                          <div className="text-center">
+                            <p className="text-2xl font-bold text-blue-600">{implementationGuide.summary.consent_required_count}</p>
+                            <p className="text-xs text-gray-500">Need Consent</p>
+                          </div>
+                        </div>
+
+                        {/* Tabs */}
+                        <div className="flex border-b">
+                          {[
+                            { id: "consent" as const, label: "Consent UI", icon: Code },
+                            { id: "retention" as const, label: "Data Retention", icon: Database },
+                            { id: "policy" as const, label: "Privacy Policy", icon: BookOpen },
+                            { id: "dark_patterns" as const, label: "Dark Patterns", icon: AlertTriangle },
+                          ].map((tab) => (
+                            <button key={tab.id} onClick={() => setActiveImplementationTab(tab.id)}
+                              className={`flex items-center gap-2 px-4 py-3 text-sm font-medium border-b-2 transition-colors ${
+                                activeImplementationTab === tab.id
+                                  ? "border-blue-600 text-blue-600 bg-blue-50"
+                                  : "border-transparent text-gray-600 hover:text-gray-900 hover:bg-gray-50"
+                              }`}>
+                              <tab.icon className="h-4 w-4" /> {tab.label}
+                            </button>
+                          ))}
+                        </div>
+
+                        {/* Tab Content */}
+                        <div className="p-6">
+                          {/* CONSENT TAB */}
+                          {activeImplementationTab === "consent" && implementationGuide.consent_spec && (
+                            <div className="space-y-6">
+                              <div className="flex items-center justify-between">
+                                <div>
+                                  <h3 className="text-lg font-semibold text-gray-900">{implementationGuide.consent_spec.regulation_name} Consent Specification</h3>
+                                  <p className="text-sm text-gray-500">Model: <span className="font-medium text-blue-600">{implementationGuide.consent_spec.consent_model}</span></p>
+                                </div>
+                                <span className="text-xs bg-blue-100 text-blue-700 px-2 py-1 rounded-full font-medium">Copy-paste ready</span>
+                              </div>
+
+                              {/* Must Implement */}
+                              <div className="bg-amber-50 border border-amber-200 rounded-lg p-4">
+                                <h4 className="text-sm font-semibold text-amber-800 mb-2 flex items-center gap-2"><AlertTriangle className="h-4 w-4" /> Mandatory Requirements</h4>
+                                <ul className="space-y-1">
+                                  {implementationGuide.consent_spec.must_implement.map((item, i) => (
+                                    <li key={i} className="text-sm text-amber-700 flex items-start gap-2"><CheckCircle className="h-3.5 w-3.5 mt-0.5 flex-shrink-0" />{item}</li>
+                                  ))}
+                                </ul>
+                              </div>
+
+                              {/* Consent Required Tech */}
+                              {implementationGuide.consent_spec.consent_required_tech.length > 0 && (
+                                <div>
+                                  <h4 className="text-sm font-semibold text-gray-700 mb-2">Services Requiring Explicit Consent</h4>
+                                  <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                                    {implementationGuide.consent_spec.consent_required_tech.map((tech, i) => (
+                                      <div key={i} className="flex items-center gap-2 p-2 bg-red-50 border border-red-100 rounded-md">
+                                        <Lock className="h-4 w-4 text-red-500" />
+                                        <div><p className="text-sm font-medium text-gray-800">{tech.name}</p><p className="text-xs text-gray-500">{tech.reason}</p></div>
+                                      </div>
+                                    ))}
+                                  </div>
+                                </div>
+                              )}
+
+                              {/* Code Sections */}
+                              <div className="space-y-4">
+                                {[
+                                  { label: "Consent Banner HTML", code: implementationGuide.consent_spec.banner_html, copyKey: "banner", icon: Globe },
+                                  { label: "Checkbox HTML", code: implementationGuide.consent_spec.checkbox_html, copyKey: "checkbox", icon: CheckCircle },
+                                  { label: "JavaScript Implementation", code: implementationGuide.consent_spec.js_implementation, copyKey: "js", icon: Terminal },
+                                ].map((section) => (
+                                  <div key={section.copyKey}>
+                                    <div className="flex items-center justify-between mb-2">
+                                      <h4 className="text-sm font-semibold text-gray-700 flex items-center gap-2"><section.icon className="h-4 w-4" />{section.label}</h4>
+                                      <button onClick={() => copyToClipboard(section.code, section.copyKey)}
+                                        className="text-xs bg-gray-100 hover:bg-gray-200 px-2 py-1 rounded flex items-center gap-1">
+                                        {copiedCode === section.copyKey ? <><Check className="h-3 w-3 text-green-600" />Copied</> : <><Copy className="h-3 w-3" />Copy</>}
+                                      </button>
+                                    </div>
+                                    <pre className="bg-gray-900 text-gray-100 p-4 rounded-lg text-xs overflow-x-auto max-h-64 overflow-y-auto"><code>{section.code}</code></pre>
+                                  </div>
+                                ))}
+                              </div>
+
+                              {/* Dark Pattern Violations */}
+                              {implementationGuide.consent_spec.dark_pattern_violations.length > 0 && (
+                                <div className="bg-red-50 border border-red-200 rounded-lg p-4">
+                                  <h4 className="text-sm font-semibold text-red-800 mb-2">Forbidden Patterns (Will Fail Audit)</h4>
+                                  <ul className="space-y-1">
+                                    {implementationGuide.consent_spec.dark_pattern_violations.map((item, i) => (
+                                      <li key={i} className="text-sm text-red-700 flex items-start gap-2"><X className="h-3.5 w-3.5 mt-0.5 flex-shrink-0" />{item}</li>
+                                    ))}
+                                  </ul>
+                                </div>
+                              )}
+                            </div>
+                          )}
+
+                          {/* RETENTION TAB */}
+                          {activeImplementationTab === "retention" && implementationGuide.retention_policy && (
+                            <div className="space-y-6">
+                              <div className="flex items-center justify-between">
+                                <div>
+                                  <h3 className="text-lg font-semibold text-gray-900">Data Retention Schedule</h3>
+                                  <p className="text-sm text-gray-500">{implementationGuide.retention_policy.regulation_name} — {implementationGuide.retention_policy.schedules.length} schedules</p>
+                                </div>
+                              </div>
+                              <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                                <div className="bg-blue-50 p-3 rounded-lg text-center"><p className="text-xl font-bold text-blue-700">{implementationGuide.retention_policy.summary.total_schedules}</p><p className="text-xs text-blue-600">Schedules</p></div>
+                                <div className="bg-orange-50 p-3 rounded-lg text-center"><p className="text-xl font-bold text-orange-700">{implementationGuide.retention_policy.summary.pii_schedules}</p><p className="text-xs text-orange-600">Contain PII</p></div>
+                                <div className="bg-purple-50 p-3 rounded-lg text-center"><p className="text-xl font-bold text-purple-700">{implementationGuide.retention_policy.summary.require_anonymization}</p><p className="text-xs text-purple-600">Need Anonymization</p></div>
+                                <div className="bg-green-50 p-3 rounded-lg text-center"><p className="text-xl font-bold text-green-700">{implementationGuide.retention_policy.summary.cloud_providers_detected.length}</p><p className="text-xs text-green-600">Cloud Providers</p></div>
+                              </div>
+                              <div className="space-y-4">
+                                {implementationGuide.retention_policy.schedules.map((sched, i) => (
+                                  <div key={i} className="border rounded-lg overflow-hidden">
+                                    <button onClick={() => setExpandedRetention(expandedRetention === String(i) ? null : String(i))}
+                                      className="w-full flex items-center justify-between p-4 bg-gray-50 hover:bg-gray-100 transition-colors">
+                                      <div className="flex items-center gap-3">
+                                        {sched.contains_pii ? <AlertCircle className="h-5 w-5 text-red-500" /> : <CheckCircle className="h-5 w-5 text-green-500" />}
+                                        <div className="text-left">
+                                          <h4 className="font-medium text-gray-900">{sched.data_type}</h4>
+                                          <p className="text-xs text-gray-500">Retention: <span className="font-medium">{typeof sched.max_retention === 'number' ? `${sched.max_retention} days` : sched.max_retention}</span>{sched.anonymization_required && <span className="ml-2 text-purple-600">• Anonymization required</span>}</p>
+                                        </div>
+                                      </div>
+                                      {expandedRetention === String(i) ? <ChevronUp className="h-4 w-4 text-gray-400" /> : <ChevronDown className="h-4 w-4 text-gray-400" />}
+                                    </button>
+                                    {expandedRetention === String(i) && (
+                                      <div className="p-4 space-y-4 bg-white">
+                                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                          <div><p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1">Legal Basis</p><p className="text-sm text-gray-800">{sched.legal_basis}</p></div>
+                                          <div><p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1">PII Types</p><p className="text-sm text-gray-800">{sched.pii_types.join(", ")}</p></div>
+                                        </div>
+                                        <div className="bg-blue-50 border border-blue-100 rounded-lg p-3"><p className="text-xs font-semibold text-blue-700 mb-1">Justification</p><p className="text-sm text-blue-800">{sched.justification}</p></div>
+                                        {sched.anonymization_required && (
+                                          <div className="bg-purple-50 border border-purple-100 rounded-lg p-3"><p className="text-xs font-semibold text-purple-700 mb-1">Anonymization Method</p><p className="text-sm text-purple-800">{sched.anonymization_method}</p></div>
+                                        )}
+                                        {Object.entries(sched.implementation).length > 0 && (
+                                          <div className="space-y-3">
+                                            <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Implementation</p>
+                                            {Object.entries(sched.implementation).map(([key, code]) => (
+                                              <div key={key} className="relative">
+                                                <div className="flex items-center justify-between mb-1">
+                                                  <span className="text-xs font-medium text-gray-600 capitalize">{key.replace(/_/g, " ")}</span>
+                                                  <button onClick={() => copyToClipboard(code, `retention-${i}-${key}`)} className="text-xs bg-gray-100 hover:bg-gray-200 px-2 py-0.5 rounded flex items-center gap-1">
+                                                    {copiedCode === `retention-${i}-${key}` ? <Check className="h-3 w-3 text-green-600" /> : <Copy className="h-3 w-3" />}
+                                                  </button>
+                                                </div>
+                                                <pre className="bg-gray-900 text-gray-100 p-3 rounded-lg text-xs overflow-x-auto"><code>{code}</code></pre>
+                                              </div>
+                                            ))}
+                                          </div>
+                                        )}
+                                      </div>
+                                    )}
+                                  </div>
+                                ))}
+                              </div>
+                            </div>
+                          )}
+
+                          {/* POLICY TAB */}
+                          {activeImplementationTab === "policy" && implementationGuide.privacy_policy && (
+                            <div className="space-y-4">
+                              <div className="flex items-center justify-between">
+                                <div>
+                                  <h3 className="text-lg font-semibold text-gray-900">Tailored Privacy Policy</h3>
+                                  <p className="text-sm text-gray-500">Assembled from {implementationGuide.tech_stack.length} tech-specific modules • {implementationGuide.privacy_policy.split(/\s+/).length} words</p>
+                                </div>
+                                <button onClick={handleDownloadPolicy} className="text-sm bg-green-600 text-white px-3 py-1.5 rounded-md hover:bg-green-700 flex items-center gap-1"><Download className="h-3.5 w-3.5" />Download .md</button>
+                              </div>
+                              <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 flex items-start gap-2">
+                                <AlertTriangle className="h-4 w-4 text-amber-600 mt-0.5 flex-shrink-0" />
+                                <p className="text-xs text-amber-700">This is an auto-generated template based on your detected tech stack. <strong>Replace all [bracketed placeholders]</strong> with your actual business details before use. Always review with qualified legal counsel.</p>
+                              </div>
+                              <div className="relative">
+                                <pre className="bg-gray-50 border border-gray-200 p-6 rounded-lg text-sm text-gray-700 whitespace-pre-wrap font-mono max-h-[600px] overflow-y-auto">{implementationGuide.privacy_policy}</pre>
+                              </div>
+                            </div>
+                          )}
+
+                          {/* DARK PATTERNS TAB */}
+                          {activeImplementationTab === "dark_patterns" && (
+                            <div className="space-y-6">
+                              <h3 className="text-lg font-semibold text-gray-900">Dark Pattern Detection</h3>
+                              {implementationGuide.dark_patterns.length === 0 ? (
+                                <div className="bg-green-50 border border-green-200 rounded-lg p-6 text-center">
+                                  <CheckCircle className="h-12 w-12 text-green-500 mx-auto mb-3" />
+                                  <h4 className="text-base font-medium text-green-800">No Dark Patterns Detected</h4>
+                                  <p className="text-sm text-green-600 mt-1">Your document does not contain common dark pattern language. Good job!</p>
+                                </div>
+                              ) : (
+                                <div className="space-y-4">
+                                  {implementationGuide.dark_patterns.map((dp, i) => (
+                                    <div key={i} className={`border rounded-lg p-4 ${dp.severity === 'HIGH' ? 'bg-red-50 border-red-200' : 'bg-yellow-50 border-yellow-200'}`}>
+                                      <div className="flex items-start gap-3">
+                                        <AlertTriangle className={`h-5 w-5 mt-0.5 flex-shrink-0 ${dp.severity === 'HIGH' ? 'text-red-500' : 'text-yellow-500'}`} />
+                                        <div className="flex-1">
+                                          <div className="flex items-center gap-2 mb-1">
+                                            <h4 className="font-medium text-gray-900">{dp.pattern}</h4>
+                                            <span className={`text-xs font-bold px-2 py-0.5 rounded ${dp.severity === 'HIGH' ? 'bg-red-200 text-red-800' : 'bg-yellow-200 text-yellow-800'}`}>{dp.severity}</span>
+                                          </div>
+                                          <p className="text-xs text-gray-500 mb-2">{dp.regulation}</p>
+                                          <div className="bg-white border rounded-md p-3"><p className="text-xs font-semibold text-gray-600 mb-1">Required Fix:</p><p className="text-sm text-gray-700">{dp.fix}</p></div>
+                                        </div>
+                                      </div>
+                                    </div>
+                                  ))}
+                                </div>
+                              )}
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
+
                 {analysisGaps.length > 0 && (
                   <div className="bg-white rounded-lg border shadow-sm p-6">
                     <div className="flex items-center justify-between mb-4">
@@ -522,7 +982,7 @@ export default function Home() {
                         Compliance Gaps ({analysisGaps.length})
                       </h2>
                       <div className="flex gap-2">
-                        <button 
+                        <button
                           onClick={handleGenerateFix}
                           disabled={isAnalyzing}
                           className="text-sm bg-blue-600 text-white px-3 py-1.5 rounded-md hover:bg-blue-700 flex items-center gap-1 disabled:opacity-50"
@@ -530,7 +990,7 @@ export default function Home() {
                           <Wand2 className="h-3.5 w-3.5" />
                           Generate Fix
                         </button>
-                        <button 
+                        <button
                           onClick={handleDownloadReport}
                           className="text-sm bg-purple-600 text-white px-3 py-1.5 rounded-md hover:bg-purple-700 flex items-center gap-1"
                         >
@@ -539,7 +999,7 @@ export default function Home() {
                         </button>
                       </div>
                     </div>
-                    
+
                     <div className="space-y-4">
                       {analysisGaps.map((gap, i) => (
                         <div key={i} className="border rounded-lg p-4 space-y-3">
@@ -598,7 +1058,7 @@ export default function Home() {
                         <Wand2 className="h-5 w-5 text-purple-600" />
                         Fixed Privacy Policy
                       </h2>
-                      <button 
+                      <button
                         onClick={handleDownloadFix}
                         className="text-sm bg-green-600 text-white px-3 py-1.5 rounded-md hover:bg-green-700 flex items-center gap-1"
                       >
