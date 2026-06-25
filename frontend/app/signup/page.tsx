@@ -3,21 +3,7 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { Shield, Mail, Lock, User, Building2, Loader2 } from "lucide-react";
-import { API_BASE } from "../../lib/api";
-
-function formatApiError(detail: unknown, fallback: string): string {
-  if (typeof detail === "string") return detail;
-  if (Array.isArray(detail)) {
-    return detail
-      .map((item) =>
-        typeof item === "object" && item !== null && "msg" in item
-          ? String((item as { msg: string }).msg)
-          : String(item)
-      )
-      .join(". ");
-  }
-  return fallback;
-}
+import { useAuth } from "../context/AuthContext";
 
 export default function SignupPage() {
   const [email, setEmail] = useState("");
@@ -26,6 +12,7 @@ export default function SignupPage() {
   const [companyName, setCompanyName] = useState("");
   const [error, setError] = useState("");
   const [isLoading, setIsLoading] = useState(false);
+  const { signup } = useAuth();
   const router = useRouter();
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -33,62 +20,11 @@ export default function SignupPage() {
     setError("");
     setIsLoading(true);
 
-    try {
-      const formData = new URLSearchParams();
-      formData.append("email", email);
-      formData.append("password", password);
-      formData.append("full_name", fullName);
-      formData.append("company_name", companyName);
-
-      const res = await fetch(`${API_BASE}/auth/register`, {
-        method: "POST",
-        headers: { "Content-Type": "application/x-www-form-urlencoded" },
-        body: formData,
-      });
-
-      const text = await res.text();
-      let data: { detail?: unknown; access_token?: string };
-      try {
-        data = JSON.parse(text);
-      } catch {
-        data = { detail: text };
-      }
-
-      if (!res.ok) {
-        setError(
-          formatApiError(
-            data.detail,
-            res.status === 400
-              ? "Failed to create account. This email may already be registered."
-              : `Failed to create account (${res.status}). Please try again.`
-          )
-        );
-        setIsLoading(false);
-        return;
-      }
-
-      const loginForm = new URLSearchParams();
-      loginForm.append("username", email);
-      loginForm.append("password", password);
-
-      const loginRes = await fetch(`${API_BASE}/auth/login`, {
-        method: "POST",
-        headers: { "Content-Type": "application/x-www-form-urlencoded" },
-        body: loginForm,
-      });
-
-      const loginData = await loginRes.json();
-
-      if (loginRes.ok && loginData.access_token) {
-        localStorage.setItem("token", loginData.access_token);
-        window.location.href = "/";
-      } else {
-        setError("Account created! Please sign in manually.");
-        router.push("/login");
-      }
-    } catch (err) {
-      console.error("Signup error:", err);
-      setError("Network error. Please try again.");
+    const result = await signup(email, password, fullName, companyName);
+    if (result.success) {
+      router.push("/");
+    } else {
+      setError(result.error || "Failed to create account.");
     }
     setIsLoading(false);
   };

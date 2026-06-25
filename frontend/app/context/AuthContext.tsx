@@ -13,8 +13,8 @@ interface User {
 interface AuthContextType {
   user: User | null;
   token: string | null;
-  login: (email: string, password: string) => Promise<boolean>;
-  signup: (email: string, password: string, fullName: string, companyName: string) => Promise<boolean>;
+  login: (email: string, password: string) => Promise<{ success: boolean; error?: string }>;
+  signup: (email: string, password: string, fullName: string, companyName: string) => Promise<{ success: boolean; error?: string }>;
   logout: () => void;
   isLoading: boolean;
 }
@@ -55,7 +55,21 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   };
 
-  const login = async (email: string, password: string): Promise<boolean> => {
+  function parseErrorDetail(detail: unknown, fallback: string): string {
+    if (typeof detail === "string") return detail;
+    if (Array.isArray(detail)) {
+      return detail
+        .map((item) =>
+          typeof item === "object" && item !== null && "msg" in item
+            ? String((item as { msg: string }).msg)
+            : String(item)
+        )
+        .join(". ");
+    }
+    return fallback;
+  }
+
+  const login = async (email: string, password: string): Promise<{ success: boolean; error?: string }> => {
     try {
       const formData = new URLSearchParams();
       formData.append("username", email);
@@ -67,20 +81,33 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         body: formData,
       });
 
-      if (!res.ok) return false;
+      const text = await res.text();
+      let data: { detail?: unknown; access_token?: string; user?: User };
+      try {
+        data = JSON.parse(text);
+      } catch {
+        return { success: false, error: text || "Invalid email or password" };
+      }
 
-      const data = await res.json();
+      if (!res.ok) {
+        return { success: false, error: parseErrorDetail(data.detail, "Invalid email or password") };
+      }
+
+      if (!data.access_token) {
+        return { success: false, error: "No token received from server" };
+      }
+
       localStorage.setItem("token", data.access_token);
       setToken(data.access_token);
-      setUser(data.user);
-      return true;
+      if (data.user) setUser(data.user);
+      return { success: true };
     } catch (error) {
       console.error("Login failed:", error);
-      return false;
+      return { success: false, error: "Network error. Please try again." };
     }
   };
 
-  const signup = async (email: string, password: string, fullName: string, companyName: string): Promise<boolean> => {
+  const signup = async (email: string, password: string, fullName: string, companyName: string): Promise<{ success: boolean; error?: string }> => {
     try {
       const formData = new URLSearchParams();
       formData.append("email", email);
@@ -94,10 +121,31 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         body: formData,
       });
 
-      return res.ok;
+      const text = await res.text();
+      let data: { detail?: unknown };
+      try {
+        data = JSON.parse(text);
+      } catch {
+        data = { detail: text };
+      }
+
+      if (!res.ok) {
+        return {
+          success: false,
+          error: parseErrorDetail(
+            data.detail,
+            res.status === 400
+              ? "This email may already be registered."
+              : `Failed to create account (${res.status}).`
+          ),
+        };
+      }
+
+      // Auto-login after successful registration
+      return await login(email, password);
     } catch (error) {
       console.error("Signup failed:", error);
-      return false;
+      return { success: false, error: "Network error. Please try again." };
     }
   };
 

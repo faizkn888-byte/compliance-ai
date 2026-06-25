@@ -1,68 +1,28 @@
 "use client";
 
 import { useState } from "react";
+import { useRouter } from "next/navigation";
 import { Shield, Mail, Lock, Loader2 } from "lucide-react";
-import { API_BASE } from "../../lib/api";
-
-function formatApiError(detail: unknown, fallback: string): string {
-  if (typeof detail === "string") return detail;
-  if (Array.isArray(detail)) {
-    return detail
-      .map((item) =>
-        typeof item === "object" && item !== null && "msg" in item
-          ? String((item as { msg: string }).msg)
-          : String(item)
-      )
-      .join(". ");
-  }
-  return fallback;
-}
+import { useAuth } from "../context/AuthContext";
 
 export default function LoginPage() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [isLoading, setIsLoading] = useState(false);
+  const { login } = useAuth();
+  const router = useRouter();
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError("");
     setIsLoading(true);
 
-    try {
-      const formData = new URLSearchParams();
-      formData.append("username", email);
-      formData.append("password", password);
-
-      const res = await fetch(`${API_BASE}/auth/login`, {
-        method: "POST",
-        headers: { "Content-Type": "application/x-www-form-urlencoded" },
-        body: formData,
-      });
-
-      const text = await res.text();
-      let data: { detail?: unknown; access_token?: string };
-      try {
-        data = JSON.parse(text);
-      } catch {
-        data = { detail: text };
-      }
-
-      if (!res.ok) {
-        setError(formatApiError(data.detail, "Invalid email or password"));
-        setIsLoading(false);
-        return;
-      }
-
-      if (data.access_token) {
-        localStorage.setItem("token", data.access_token);
-        window.location.href = "/";
-      } else {
-        setError("Login failed. No token received.");
-      }
-    } catch (err) {
-      console.error("Login error:", err);
-      setError("Network error. Check console.");
+    const result = await login(email, password);
+    if (result.success) {
+      router.push("/");
+    } else {
+      setError(result.error || "Invalid email or password");
     }
     setIsLoading(false);
   };
